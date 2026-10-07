@@ -11,7 +11,6 @@ import logoLight from "../assets/images/logo-light.png";
 import SearchOption from '../Components/Common/SearchOption';
 import LanguageDropdown from '../Components/Common/LanguageDropdown';
 import WebAppsDropdown from '../Components/Common/WebAppsDropdown';
-import MyCartDropdown from '../Components/Common/MyCartDropdown';
 import FullScreenDropdown from '../Components/Common/FullScreenDropdown';
 import NotificationDropdown from '../Components/Common/NotificationDropdown';
 import ProfileDropdown from '../Components/Common/ProfileDropdown';
@@ -136,14 +135,22 @@ const Header = ({ onChangeLayoutMode, layoutModeType, headerClass }) => {
                                 </DropdownMenu>
                             </Dropdown>
 
+                            {/* Home Button */}
+                            <div className="ms-1 header-item d-flex align-items-center">
+                                <Link
+                                    to="/dashboard"
+                                    title="Home"
+                                    className="btn btn-icon btn-topbar btn-ghost-secondary rounded-circle d-flex align-items-center justify-content-center"
+                                >
+                                    <i className="bx bx-home-alt fs-22"></i>
+                                </Link>
+                            </div>
+
                             {/* LanguageDropdown */}
                             <LanguageDropdown />
 
                             {/* WebAppsDropdown */}
                             <WebAppsDropdown />
-
-                            {/* MyCartDropdwon */}
-                            <MyCartDropdown />
 
                             {/* FullScreenDropdown */}
                             <FullScreenDropdown />

@@ -1,83 +1,28 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from contextlib import asynccontextmanager
 import logging
 import time
 import asyncio
 from sqlalchemy import text
-from .routers import triage, medicalchat, maps, vapi, admin
+from .routers import triage, medicalchat, maps, vapi, admin, auth, hospital, user_portal
 from .database import Base, engine, SessionLocal
+from .auth import get_password_hash
+from . import models
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Create the FastAPI app
-app = FastAPI(title="AI Medical Dispatch")
-
-# Request logging middleware - only log errors
-class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        start_time = time.time()
-        
-        try:
-            response = await call_next(request)
-            process_time = time.time() - start_time
-            # Only log slow requests (>1s) or errors
-            if process_time > 1.0:
-                logger.warning(f"⚠️ Slow request: {request.method} {request.url.path} - {process_time:.3f}s")
-            return response
-        except Exception as e:
-            process_time = time.time() - start_time
-            logger.error(f"❌ Error: {request.method} {request.url.path} - {str(e)} - {process_time:.3f}s")
-            raise
-
-# Add request logging middleware
-app.add_middleware(RequestLoggingMiddleware)
-
-# --- CORS Configuration ---
-origins = [
-    "http://localhost:3000",   # React development server (create-react-app default)
-    "http://localhost:3001",   # Alternative React port
-    "http://localhost:5173",   # Vite default port
-    "http://localhost:5174",   # Alternative Vite port
-    "http://localhost:8080",   # Common development port
-    "http://127.0.0.1:3000",   # Alternative localhost notation
-    "http://127.0.0.1:5173",   # Alternative localhost notation
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for VAPI webhooks (ngrok URLs are dynamic)
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-    # Explicitly expose the custom header to the frontend
-    expose_headers=["X-LLM-Response-Text"]
-)
-
-# Create DB tables
-Base.metadata.create_all(bind=engine)
-
-# Routers
-app.include_router(triage.router)
-app.include_router(medicalchat.router)
-app.include_router(maps.router, prefix="/maps", tags=["maps"])
-app.include_router(vapi.router, tags=["vapi"])
-app.include_router(admin.router)   
-
 # --- Background task: auto-complete old pending cases ---
-
 async def _auto_complete_old_cases_loop():
     """Periodically mark Pending/Assigned cases older than 10 minutes as Completed."""
     while True:
         try:
-            # Run every 60 seconds
             await asyncio.sleep(60)
             db = SessionLocal()
             try:
-                # Use raw SQL to avoid ORM issues if column not yet migrated
-                # Update cases to Completed and corresponding patients to Admitted
                 db.execute(text(
                     """
                     UPDATE cases c
@@ -92,44 +37,167 @@ async def _auto_complete_old_cases_loop():
                 db.commit()
             finally:
                 db.close()
+        except asyncio.CancelledError:
+            break
         except Exception as e:
             logger.error(f"Auto-complete job failed: {e}")
 
 
-@app.on_event("startup")
-async def startup_tasks():
-    # Ensure DB schema is compatible (add created_at if missing)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Ensure DB schema is compatible and seed initial demo data
     try:
         db = SessionLocal()
         try:
-            db.execute(text(
-                """
-                CREATE TABLE IF NOT EXISTS __dummy__(id INT PRIMARY KEY) -- no-op to ensure connection
-                """
-            ))
-            # Conditionally add created_at column if it's missing
-            result = db.execute(text(
-                """
-                SELECT COUNT(*) AS cnt
-                FROM information_schema.COLUMNS
-                WHERE TABLE_SCHEMA = DATABASE()
-                  AND TABLE_NAME = 'cases'
-                  AND COLUMN_NAME = 'created_at'
-                """
-            ))
-            cnt = list(result)[0][0]
-            if cnt == 0:
-                db.execute(text(
-                    """
-                    ALTER TABLE cases
-                    ADD COLUMN created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
-                    """
-                ))
+            def ensure_column(table_name, column_name, column_def):
+                try:
+                    result = db.execute(text(
+                        f"""
+                        SELECT COUNT(*) AS cnt
+                        FROM information_schema.COLUMNS
+                        WHERE TABLE_SCHEMA = DATABASE()
+                          AND TABLE_NAME = '{table_name}'
+                          AND COLUMN_NAME = '{column_name}'
+                        """
+                    ))
+                    cnt = list(result)[0][0]
+                    if cnt == 0:
+                        db.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}"))
+                        db.commit()
+                        logger.info(f"Added column {column_name} to {table_name}")
+                except Exception as col_err:
+                    logger.warning(f"Column check/add for {table_name}.{column_name}: {col_err}")
+
+            ensure_column("cases", "created_at", "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP")
+            ensure_column("cases", "hospital_id", "INT NULL")
+            ensure_column("cases", "user_id", "INT NULL")
+            ensure_column("ambulances", "hospital_id", "INT NULL")
+
+            # Seed initial hospitals if table is empty
+            hospital_count = db.query(models.Hospital).count()
+            if hospital_count == 0:
+                seed_hospitals = [
+                    models.Hospital(
+                        name="Apollo Hospital, Pallavaram",
+                        address="GST Road, Pallavaram, Chennai - 600043",
+                        latitude=12.9675, longitude=80.1491,
+                        contact="+91 44 2000 0001", available_beds=24,
+                    ),
+                    models.Hospital(
+                        name="Fortis Malar Hospital",
+                        address="52 1st Main Rd, Gandhi Nagar, Adyar, Chennai - 600020",
+                        latitude=13.0067, longitude=80.2565,
+                        contact="+91 44 2000 0002", available_beds=30,
+                    ),
+                    models.Hospital(
+                        name="SIMS Hospital, Vadapalani",
+                        address="1 Jawaharlal Nehru Salai, Vadapalani, Chennai - 600026",
+                        latitude=13.0524, longitude=80.2119,
+                        contact="+91 44 2000 0003", available_beds=28,
+                    ),
+                    models.Hospital(
+                        name="Tiruvallur Government Hospital",
+                        address="Hospital Road, Tiruvallur - 602001",
+                        latitude=13.1427, longitude=79.9120,
+                        contact="+91 44 2000 0004", available_beds=40,
+                    ),
+                    models.Hospital(
+                        name="Sri Ramachandra Hospital, Porur",
+                        address="No.1, Ramachandra Nagar, Porur, Chennai - 600116",
+                        latitude=13.0382, longitude=80.1565,
+                        contact="+91 44 2000 0005", available_beds=35,
+                    ),
+                    models.Hospital(
+                        name="Chromepet GH (ESI Hospital)",
+                        address="GST Road, Chromepet, Chennai - 600044",
+                        latitude=12.9516, longitude=80.1462,
+                        contact="+91 44 2000 0006", available_beds=22,
+                    ),
+                ]
+                db.add_all(seed_hospitals)
                 db.commit()
+                logger.info("Seeded default hospitals (Chennai / Tiruvallur area)")
+
+            # Seed initial users if table is empty
+            user_count = db.query(models.User).count()
+            if user_count == 0:
+                h = db.query(models.Hospital).first()
+                admin_user = models.User(
+                    email="admin@emergency.com",
+                    name="System Admin",
+                    password_hash=get_password_hash("admin123"),
+                    role="admin",
+                    is_active=1,
+                )
+                hospital_user = models.User(
+                    email="hospital@apollo.com",
+                    name="Apollo Dispatch Staff",
+                    password_hash=get_password_hash("hospital123"),
+                    role="hospital",
+                    hospital_id=h.id if h else None,
+                    is_active=1,
+                )
+                citizen_user = models.User(
+                    email="user@emergency.com",
+                    name="John Citizen",
+                    password_hash=get_password_hash("user123"),
+                    role="user",
+                    is_active=1,
+                )
+                db.add_all([admin_user, hospital_user, citizen_user])
+                db.commit()
+                logger.info("Seeded default demo accounts: admin@emergency.com, hospital@apollo.com, user@emergency.com")
         finally:
             db.close()
     except Exception as e:
-        logger.error(f"Schema check failed: {e}")
+        logger.error(f"Startup task / seeding failed: {e}")
 
-    # Fire-and-forget background loop
-    asyncio.create_task(_auto_complete_old_cases_loop())
+    # Launch background loop
+    loop_task = asyncio.create_task(_auto_complete_old_cases_loop())
+    yield
+    loop_task.cancel()
+
+
+# Create the FastAPI app with lifespan
+app = FastAPI(title="AI Medical Dispatch", lifespan=lifespan)
+
+# Request logging middleware
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start_time = time.time()
+        try:
+            response = await call_next(request)
+            process_time = time.time() - start_time
+            threshold = 25.0 if any(p in request.url.path for p in ["/llm-chat", "/triage"]) else 2.5
+            if process_time > threshold:
+                logger.warning(f"[WARN] Slow request: {request.method} {request.url.path} - {process_time:.3f}s")
+            return response
+        except Exception as e:
+            process_time = time.time() - start_time
+            logger.error(f"[ERR] Error: {request.method} {request.url.path} - {str(e)} - {process_time:.3f}s")
+            raise
+
+app.add_middleware(RequestLoggingMiddleware)
+
+# CORS Configuration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+    expose_headers=["X-LLM-Response-Text"]
+)
+
+# Create DB tables
+Base.metadata.create_all(bind=engine)
+
+# Include Routers
+app.include_router(auth.router)
+app.include_router(hospital.router)
+app.include_router(user_portal.router)
+app.include_router(triage.router)
+app.include_router(medicalchat.router)
+app.include_router(maps.router, prefix="/maps", tags=["maps"])
+app.include_router(vapi.router, tags=["vapi"])
+app.include_router(admin.router)

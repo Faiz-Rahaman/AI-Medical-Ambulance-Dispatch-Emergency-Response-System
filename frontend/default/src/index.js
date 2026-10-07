@@ -1,3 +1,21 @@
+// Suppress cross-origin "Script error." from external scripts (Google Maps, browser extensions)
+if (typeof window !== 'undefined') {
+  window.addEventListener('error', (event) => {
+    if (event.message && (event.message === 'Script error.' || event.message === 'Script error' || event.message.includes('Script error'))) {
+      event.stopImmediatePropagation();
+      event.preventDefault();
+      return true;
+    }
+  }, true);
+
+  window.addEventListener('unhandledrejection', (event) => {
+    if (event.reason && String(event.reason).includes('Script error')) {
+      event.stopImmediatePropagation();
+      event.preventDefault();
+    }
+  }, true);
+}
+
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';

@@ -45,7 +45,7 @@ const AmbulanceRoute = ({ patientLat, patientLon, ambulanceType, onRouteLoaded }
       });
 
       const response = await fetch(
-        `http://localhost:8000/maps/nearest-ambulance?patient_lat=${patientLat}&patient_lon=${patientLon}&ambulance_type=${ambulanceType}`
+        `${process.env.REACT_APP_API_URL}/maps/nearest-ambulance?patient_lat=${patientLat}&patient_lon=${patientLon}&ambulance_type=${ambulanceType}`
       );
 
       console.log('Response status:', response.status);
@@ -172,11 +172,20 @@ const AmbulanceRoute = ({ patientLat, patientLon, ambulanceType, onRouteLoaded }
         <div className="card">
           <div className="card-header">
             <h5 className="card-title mb-0 d-flex align-items-center">
-              <Truck size={20} className="me-2 text-success" />
-              Assigned Ambulance
+              <Truck size={20} className={`me-2 ${ambulanceInfo.status === 'standby' || ambulanceInfo.vehicle_number?.includes('DEMO') ? 'text-warning' : 'text-success'}`} />
+              {ambulanceInfo.status === 'standby' || ambulanceInfo.vehicle_number?.includes('DEMO') ? 'Standby Reserve Unit' : 'Assigned Ambulance'}
             </h5>
           </div>
           <div className="card-body">
+            {(ambulanceInfo.status === 'standby' || ambulanceInfo.vehicle_number?.includes('DEMO')) && (
+              <div className="alert alert-warning mb-3 d-flex align-items-start" role="alert">
+                <div className="me-2 fs-5">⚠️</div>
+                <div>
+                  <strong className="d-block">Priority Queue - Standby Unit Alerted</strong>
+                  <span className="text-muted small">All immediate local units are currently busy. Your case is at the top of the priority queue, and a standby reserve ambulance has been alerted.</span>
+                </div>
+              </div>
+            )}
             <div className="row">
               {/* Ambulance Details */}
               <div className="col-md-6 mb-4">
@@ -198,9 +207,10 @@ const AmbulanceRoute = ({ patientLat, patientLon, ambulanceType, onRouteLoaded }
                           <td>
                             <span className={`badge fw-medium ${
                               ambulanceInfo.status === 'available' ? 'bg-success' : 
-                              ambulanceInfo.status === 'dispatch' ? 'bg-primary' : 'bg-secondary'
+                              ambulanceInfo.status === 'dispatch' ? 'bg-primary' : 
+                              ambulanceInfo.status === 'standby' ? 'bg-warning text-dark' : 'bg-secondary'
                             }`}>
-                              {ambulanceInfo.status}
+                              {ambulanceInfo.status === 'standby' ? 'Standby (Queued)' : ambulanceInfo.status}
                             </span>
                           </td>
                         </tr>
@@ -295,10 +305,14 @@ const AmbulanceRoute = ({ patientLat, patientLon, ambulanceType, onRouteLoaded }
                 </button>
               </div>
               <div className="col-md-6 mb-2">
-                <button className="btn btn-success w-100 d-flex align-items-center justify-content-center">
+                <a
+                  href="tel:+16089013032"
+                  className="btn btn-success w-100 d-flex align-items-center justify-content-center text-white"
+                  title="Call VAPI AI Dispatch (+1 608-901-3032)"
+                >
                   <Phone size={16} className="me-2" />
-                  Contact Crew
-                </button>
+                  Contact Crew (VAPI AI)
+                </a>
               </div>
             </div>
           </div>

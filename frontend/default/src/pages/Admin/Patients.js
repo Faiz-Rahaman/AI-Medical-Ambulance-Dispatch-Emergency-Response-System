@@ -11,7 +11,7 @@ const Patients = () => {
         setLoading(true);
         setError(false);
         try {
-            const res = await fetch('http://localhost:8000/admin/patients', {
+            const res = await fetch(`${process.env.REACT_APP_API_URL}/admin/patients`, {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',

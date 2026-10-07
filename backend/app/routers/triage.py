@@ -158,27 +158,35 @@ async def create_new_case(case: CaseInput, db: Session = Depends(get_db)):
             
             if best_ambulance_data:
                 selected_ambulance = best_ambulance_data["ambulance"]
-                
-                # Update ambulance status to 'dispatch'
-                selected_ambulance.status = "dispatch"  # pyright: ignore[reportAttributeAccessIssue]
-                
-                # Update case status to 'Assigned'
-                db_case.status = "Assigned"
-                
-                # Update patient status to 'Travelling' when ambulance is dispatched
-                db_patient.patient_status = "Travelling"
-                
-                db.commit()
-                
-                print(f"✅ Dispatched ambulance {selected_ambulance.vehicle_number} for case {db_case.id}")
-                print(f"   Selection reason: {best_ambulance_data.get('selection_reason', 'N/A')}")
+                is_fallback = best_ambulance_data.get("is_fallback", False) or "fallback" in str(best_ambulance_data.get("selection_reason", ""))
+
+                if is_fallback:
+                    # All local units busy: keep case in priority Pending queue
+                    db_case.status = "Pending"
+                    db_patient.patient_status = "Pending"
+                    db.commit()
+                    print(f"[WARN] No local ambulance with fuel >50% available. Case {db_case.id} queued as Pending.")
+                    print(f"   Standby reserve unit {selected_ambulance.vehicle_number} alerted.")
+                else:
+                    # Update ambulance status to 'dispatch'
+                    selected_ambulance.status = "dispatch"  # pyright: ignore[reportAttributeAccessIssue]
+                    # Update case status to 'Assigned'
+                    db_case.status = "Assigned"
+                    # Update patient status to 'Travelling' when ambulance is dispatched
+                    db_patient.patient_status = "Travelling"
+                    db.commit()
+                    print(f"[OK] Dispatched ambulance {selected_ambulance.vehicle_number} for case {db_case.id}")
+                    print(f"   Selection reason: {best_ambulance_data.get('selection_reason', 'N/A')}")
             else:
-                print(f"⚠️ No suitable ambulance found for case {db_case.id}")
+                print(f"[WARN] No suitable ambulance found for case {db_case.id}")
+                db_case.status = "Pending"
+                db_patient.patient_status = "Pending"
+                db.commit()
         else:
-            print(f"⚠️ No patient coordinates provided for case {db_case.id}")
+            print(f"[WARN] No patient coordinates provided for case {db_case.id}")
             
     except Exception as e:
-        print(f"❌ Error during ambulance dispatch: {e}")
+        print(f"[ERR] Error during ambulance dispatch: {e}")
         # Case is still created, just no ambulance dispatched
     
     return {
@@ -251,7 +259,44 @@ async def get_case_ambulance_details(case_id: int, db: Session = Depends(get_db)
     ).order_by(models.Ambulance.last_updated.desc()).first()
     
     if not dispatched_ambulance:
-        raise HTTPException(status_code=404, detail="No dispatched ambulance found")
+        # Check if case is Pending or no real ambulance is dispatched
+        from .maps import create_fallback_ambulance, get_route_info
+        fallback_amb = create_fallback_ambulance(case.patient.ambulance_type if case.patient else "Basic")
+        route_info = None
+        if case.latitude is not None and case.longitude is not None:
+            try:
+                route_info = get_route_info(
+                    float(case.latitude),  # type: ignore
+                    float(case.longitude),  # type: ignore
+                    float(fallback_amb.latitude),  # type: ignore
+                    float(fallback_amb.longitude)  # type: ignore
+                )
+            except Exception as e:
+                print(f"Error getting standby route info: {e}")
+
+        return {
+            "case_id": case_id,
+            "patient_name": case.patient.name if case.patient else "Unknown",
+            "is_fallback": True,
+            "queue_status": "Pending Dispatch - Standby Unit Alerted",
+            "ambulance": {
+                "ambulance_id": fallback_amb.ambulance_id,
+                "vehicle_number": fallback_amb.vehicle_number,
+                "type_of_ambulance": fallback_amb.type_of_ambulance,
+                "current_location": fallback_amb.current_location,
+                "latitude": float(fallback_amb.latitude) if fallback_amb.latitude is not None else 0.0,
+                "longitude": float(fallback_amb.longitude) if fallback_amb.longitude is not None else 0.0,
+                "no_of_staffs": fallback_amb.no_of_staffs,
+                "fuel_level": fallback_amb.fuel_level,
+                "status": "standby"
+            },
+            "route": route_info,
+            "patient_location": {
+                "latitude": float(case.latitude) if case.latitude is not None else 0.0,
+                "longitude": float(case.longitude) if case.longitude is not None else 0.0,
+                "address": case.location
+            }
+        }
     
     # If we have patient coordinates, get route information
     route_info = None

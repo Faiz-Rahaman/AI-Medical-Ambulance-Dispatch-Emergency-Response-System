@@ -22,12 +22,12 @@ const Logout = (props) => {
   const isUserLogout = useSelector(logoutData);
 
   useEffect(() => {
+    sessionStorage.removeItem("authUser");
+    localStorage.removeItem("authUser");
     dispatch(logoutUser());
   }, [dispatch]);
 
-  if (isUserLogout) {
-    return <Navigate to="/login" />;
-  }
+  return <Navigate to="/login" replace />;
 
   return <></>;
 };

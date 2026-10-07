@@ -105,11 +105,12 @@ const UserProfile = () => {
                 <CardBody>
                   <div className="d-flex">
                     <div className="mx-3">
-                      <img
-                        src={avatar}
-                        alt=""
-                        className="avatar-md rounded-circle img-thumbnail"
-                      />
+                      <div
+                        className="avatar-md rounded-circle bg-primary bg-opacity-10 text-primary d-flex align-items-center justify-content-center border border-primary border-opacity-25 shadow-sm"
+                        style={{ width: '72px', height: '72px' }}
+                      >
+                        <i className="ri-shield-user-line text-primary" style={{ fontSize: '2.2rem' }}></i>
+                      </div>
                     </div>
                     <div className="flex-grow-1 align-self-center">
                       <div className="text-muted">

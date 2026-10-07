@@ -65,23 +65,38 @@ const GoogleMapsRoute = ({
     ]
   };
 
-  const patientMarkerIcon = {
-    path: window.google?.maps?.SymbolPath?.CIRCLE || 'circle',
+  const patientMarkerIcon = isLoaded && window.google?.maps ? {
+    path: (window.google.maps.SymbolPath && window.google.maps.SymbolPath.CIRCLE !== undefined)
+      ? window.google.maps.SymbolPath.CIRCLE
+      : 0,
     fillColor: '#FF1744',
     fillOpacity: 1,
     strokeColor: '#FFFFFF',
     strokeWeight: 3,
     scale: 15
-  };
+  } : undefined;
 
-  const ambulanceMarkerIcon = {
-    path: window.google?.maps?.SymbolPath?.CIRCLE || 'circle',
+  const ambulanceMarkerIcon = isLoaded && window.google?.maps ? {
+    path: (window.google.maps.SymbolPath && window.google.maps.SymbolPath.CIRCLE !== undefined)
+      ? window.google.maps.SymbolPath.CIRCLE
+      : 0,
     fillColor: '#00C853',
     fillOpacity: 1,
     strokeColor: '#FFFFFF',
     strokeWeight: 3,
     scale: 15
-  };
+  } : undefined;
+
+  const userMarkerIcon = isLoaded && window.google?.maps ? {
+    path: (window.google.maps.SymbolPath && window.google.maps.SymbolPath.CIRCLE !== undefined)
+      ? window.google.maps.SymbolPath.CIRCLE
+      : 0,
+    fillColor: '#2196F3',
+    fillOpacity: 1,
+    strokeColor: '#FFFFFF',
+    strokeWeight: 3,
+    scale: 12
+  } : undefined;
 
   // Decode the encoded polyline from the Google Directions API into road-following points.
   useEffect(() => {
@@ -261,7 +276,7 @@ const GoogleMapsRoute = ({
           options={mapOptions}
         >
           {/* Patient Marker */}
-          {patientLat && patientLon && (
+          {patientLat && patientLon && isLoaded && patientMarkerIcon && (
             <Marker
               position={{ lat: patientLat, lng: patientLon }}
               title="Patient Location"
@@ -271,7 +286,7 @@ const GoogleMapsRoute = ({
           )}
 
           {/* Ambulance Marker */}
-          {ambulanceLat && ambulanceLon && (
+          {ambulanceLat && ambulanceLon && isLoaded && ambulanceMarkerIcon && (
             <Marker
               position={{ lat: ambulanceLat, lng: ambulanceLon }}
               title={`Ambulance: ${ambulanceInfo?.vehicle_number || 'Unknown'}`}
@@ -281,18 +296,11 @@ const GoogleMapsRoute = ({
           )}
 
           {/* User Location Marker */}
-          {userLocation && (
+          {userLocation && isLoaded && userMarkerIcon && (
             <Marker
               position={userLocation}
               title="Your Location"
-              icon={{
-                path: window.google?.maps?.SymbolPath?.CIRCLE || 'circle',
-                fillColor: '#2196F3',
-                fillOpacity: 1,
-                strokeColor: '#FFFFFF',
-                strokeWeight: 3,
-                scale: 12
-              }}
+              icon={userMarkerIcon}
               label={{ text: 'U', color: '#FFFFFF', fontSize: '12px', fontWeight: 'bold' }}
             />
           )}

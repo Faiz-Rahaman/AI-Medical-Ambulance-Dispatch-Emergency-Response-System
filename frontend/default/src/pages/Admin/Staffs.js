@@ -11,7 +11,8 @@ const Staffs = () => {
         setLoading(true);
         setError(false);
         try {
-            const res = await fetch('http://localhost:8000/admin/staffs', {
+            const API_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
+            const res = await fetch(`${API_URL}/admin/staffs`, {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',

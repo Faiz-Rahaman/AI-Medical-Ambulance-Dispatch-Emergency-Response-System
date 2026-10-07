@@ -1,27 +1,27 @@
 import React, { useEffect } from "react";
 import { Navigate, Route } from "react-router-dom";
-import { setAuthorization } from "../helpers/api_helper";
+import { setAuthorization, getLoggedinUser } from "../helpers/api_helper";
 import { useDispatch } from "react-redux";
 
 import { useProfile } from "../Components/Hooks/UserHooks";
 
 import { logoutUser } from "../slices/auth/login/thunk";
 
-const AuthProtected = (props) =>{
+const AuthProtected = (props) => {
   const dispatch = useDispatch();
-  const { userProfile, loading, token } = useProfile();
-  
-  useEffect(() => {
-    if (userProfile && !loading && token) {
-      setAuthorization(token);
-    } else if (!userProfile && loading && !token) {
-      dispatch(logoutUser());
-    }
-  }, [token, userProfile, loading, dispatch]);
+  const user = getLoggedinUser();
+  const token = user?.token;
 
-  /*
-    Bypass auth checks: always allow access to protected routes
-    */
+  useEffect(() => {
+    if (token) {
+      setAuthorization(token);
+    }
+  }, [token]);
+
+  if (!token) {
+    return <Navigate to="/login" replace />;
+  }
+
   return <>{props.children}</>;
 };
 

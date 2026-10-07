@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import Optional, List
 import googlemaps
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 import math
 from decimal import Decimal
@@ -10,23 +11,24 @@ from ..database import get_db
 from .. import models
 from ..schemas import AmbulanceStatusResponse
 
-load_dotenv()
+_env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+load_dotenv(_env_path)
 
 router = APIRouter()
 
 # Initialize Google Maps client
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY") or "AIzaSyBIcmRu-yA62s2Js4RtyJfsFKf9Rm-Xp6w"
 if not GOOGLE_MAPS_API_KEY:
-    print("⚠️ WARNING: GOOGLE_MAPS_API_KEY environment variable is not set!")
+    print("[WARN] WARNING: GOOGLE_MAPS_API_KEY environment variable is not set!")
     print("   The system will use fallback route calculations without Google Maps API.")
     gmaps = None
 else:
-    print(f"✅ Google Maps API key loaded: {GOOGLE_MAPS_API_KEY[:10]}...")
+    print(f"[OK] Google Maps API key loaded: {GOOGLE_MAPS_API_KEY[:10]}...")
     try:
         gmaps = googlemaps.Client(key=GOOGLE_MAPS_API_KEY)
-        print("✅ Google Maps client initialized successfully")
+        print("[OK] Google Maps client initialized successfully")
     except Exception as e:
-        print(f"❌ Error initializing Google Maps client: {e}")
+        print(f"[ERR] Error initializing Google Maps client: {e}")
         gmaps = None
 
 def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -65,17 +67,18 @@ def find_best_ambulance_with_routes(patient_lat: float, patient_lon: float, ambu
         # If no ambulances of specified type, fall back to all eligible ambulances
     
     if not eligible_ambulances:
-        print(f"⚠️ No eligible ambulances found with fuel >50%. Creating fallback ambulance.")
+        print(f"[WARN] No eligible ambulances found with fuel >50%. Creating standby reserve ambulance.")
         fallback_ambulance = create_fallback_ambulance(ambulance_type)
         return {
             "ambulance": fallback_ambulance,
             "route": get_route_info(patient_lat, patient_lon, 
                                   float(fallback_ambulance.latitude) if fallback_ambulance.latitude is not None else 0.0,  # type: ignore
                                   float(fallback_ambulance.longitude) if fallback_ambulance.longitude is not None else 0.0),  # type: ignore
-            "selection_reason": "fallback - no eligible ambulances"
+            "selection_reason": "fallback - no eligible ambulances",
+            "is_fallback": True
         }
     
-    print(f"🔍 Evaluating {len(eligible_ambulances)} eligible ambulances...")
+    print(f"[SEARCH] Evaluating {len(eligible_ambulances)} eligible ambulances...")
     
     # Step 3: Calculate routes for all eligible ambulances
     ambulance_route_data = []
@@ -99,11 +102,11 @@ def find_best_ambulance_with_routes(patient_lat: float, patient_lon: float, ambu
                 "ambulance_type": ambulance.type_of_ambulance
             })
             
-            print(f"📊 Ambulance {ambulance.vehicle_number}: {route_info.get('duration', 'N/A')}, "
+            print(f"[INFO] Ambulance {ambulance.vehicle_number}: {route_info.get('duration', 'N/A')}, "
                   f"{route_info.get('distance', 'N/A')}, Fuel: {ambulance.fuel_level}%")
                   
         except Exception as e:
-            print(f"❌ Error calculating route for ambulance {ambulance.vehicle_number}: {e}")
+            print(f"[ERR] Error calculating route for ambulance {ambulance.vehicle_number}: {e}")
             # Add with fallback route info
             straight_distance = calculate_distance(patient_lat, patient_lon, amb_lat, amb_lon)
             ambulance_route_data.append({
@@ -161,7 +164,7 @@ def select_best_ambulance(ambulance_route_data: list, patient_lat: float, patien
         f"with {best_ambulance_data['fuel_level']}% fuel"
     )
     
-    print(f"✅ Best ambulance selected: {best_ambulance_data['ambulance'].vehicle_number}")
+    print(f"[OK] Best ambulance selected: {best_ambulance_data['ambulance'].vehicle_number}")
     print(f"   Reason: {best_ambulance_data['selection_reason']}")
     
     return best_ambulance_data
@@ -195,80 +198,108 @@ def create_fallback_ambulance(ambulance_type: str) -> models.Ambulance:
     
     return fallback_ambulance
 
-def get_route_info(origin_lat: float, origin_lon: float, dest_lat: float, dest_lon: float) -> dict:
-    """Get route information from Google Maps API."""
-    if gmaps is None:
-        print("⚠️ Google Maps API not available, using fallback route calculation")
-        # Calculate straight-line distance as fallback
-        straight_distance = calculate_distance(origin_lat, origin_lon, dest_lat, dest_lon)
-        return {
-            "duration": f"{int(straight_distance * 2)} min (estimated)",
-            "duration_seconds": int(straight_distance * 2 * 60),
-            "distance": f"{straight_distance:.1f} km (straight line)",
-            "distance_meters": int(straight_distance * 1000),
-            "polyline": "",
-            "route_steps": [],
-            "api_status": "fallback"
-        }
-    
+def _fetch_route_via_routes_api(origin_lat: float, origin_lon: float, dest_lat: float, dest_lon: float) -> Optional[dict]:
+    """Try modern Google Maps Routes API (v2:computeRoutes)."""
+    if not GOOGLE_MAPS_API_KEY:
+        return None
     try:
-        print(f"🗺️ Requesting route from Google Maps API: ({origin_lat}, {origin_lon}) → ({dest_lat}, {dest_lon})")
-        
-        # Get directions
-        directions_result = gmaps.directions(  # pyright: ignore[reportAttributeAccessIssue]
-            origin=(origin_lat, origin_lon),
-            destination=(dest_lat, dest_lon),
-            mode="driving",
-            units="metric"
-        )
-        if not directions_result:
-            print("❌ No route found from Google Maps API")
-            raise HTTPException(status_code=404, detail="No route found")
-        
-        print(f"✅ Google Maps API returned route successfully")
-        route = directions_result[0]
-        leg = route['legs'][0]
-        
-        # Extract route information
-        duration = leg['duration']['text']
-        duration_seconds = leg['duration']['value']
-        distance = leg['distance']['text']
-        distance_meters = leg['distance']['value']
-        
-        # Get polyline for the route
-        overview_polyline = route['overview_polyline']['points']
-        
-        print(f"📊 Route details: {distance}, {duration}")
-        
-        return {
-            "duration": duration,
-            "duration_seconds": duration_seconds,
-            "distance": distance,
-            "distance_meters": distance_meters,
-            "polyline": overview_polyline,
-            "route_steps": [
-                {
-                    "instruction": step['html_instructions'].replace('<b>', '').replace('</b>', ''),
-                    "distance": step['distance']['text'],
-                    "duration": step['duration']['text']
+        import httpx
+        url = "https://routes.googleapis.com/directions/v2:computeRoutes"
+        headers = {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
+            "X-Goog-FieldMask": "routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline"
+        }
+        body = {
+            "origin": {"location": {"latLng": {"latitude": origin_lat, "longitude": origin_lon}}},
+            "destination": {"location": {"latLng": {"latitude": dest_lat, "longitude": dest_lon}}},
+            "travelMode": "DRIVE"
+        }
+        with httpx.Client(timeout=4.0) as client:
+            resp = client.post(url, headers=headers, json=body)
+            if resp.status_code == 200:
+                data = resp.json()
+                routes = data.get("routes", [])
+                if routes:
+                    r = routes[0]
+                    distance_meters = r.get("distanceMeters", 0)
+                    duration_str = r.get("duration", "0s")
+                    duration_seconds = int(duration_str.rstrip("s")) if duration_str.endswith("s") else 0
+                    polyline = r.get("polyline", {}).get("encodedPolyline", "")
+                    return {
+                        "duration": f"{max(1, duration_seconds // 60)} min",
+                        "duration_seconds": duration_seconds,
+                        "distance": f"{distance_meters / 1000:.1f} km",
+                        "distance_meters": distance_meters,
+                        "polyline": polyline,
+                        "route_steps": [],
+                        "api_status": "success"
+                    }
+    except Exception:
+        pass
+    return None
+
+def get_route_info(origin_lat: float, origin_lon: float, dest_lat: float, dest_lon: float) -> dict:
+    """Get route information from Google Maps Routes API or Directions API with distance fallback."""
+    # 1. Try modern Google Routes API
+    routes_api_result = _fetch_route_via_routes_api(origin_lat, origin_lon, dest_lat, dest_lon)
+    if routes_api_result:
+        print(f"[OK] Google Routes API returned route: {routes_api_result['distance']}, {routes_api_result['duration']}")
+        return routes_api_result
+
+    # 2. Try legacy Directions API if gmaps client is initialized
+    if gmaps is not None:
+        try:
+            directions_result = gmaps.directions(  # pyright: ignore[reportAttributeAccessIssue]
+                origin=(origin_lat, origin_lon),
+                destination=(dest_lat, dest_lon),
+                mode="driving",
+                units="metric"
+            )
+            if directions_result:
+                route = directions_result[0]
+                leg = route['legs'][0]
+                duration = leg['duration']['text']
+                duration_seconds = leg['duration']['value']
+                distance = leg['distance']['text']
+                distance_meters = leg['distance']['value']
+                overview_polyline = route['overview_polyline']['points']
+                print(f"[OK] Google Directions API returned route: {distance}, {duration}")
+                return {
+                    "duration": duration,
+                    "duration_seconds": duration_seconds,
+                    "distance": distance,
+                    "distance_meters": distance_meters,
+                    "polyline": overview_polyline,
+                    "route_steps": [
+                        {
+                            "instruction": step['html_instructions'].replace('<b>', '').replace('</b>', ''),
+                            "distance": step['distance']['text'],
+                            "duration": step['duration']['text']
+                        }
+                        for step in leg.get('steps', [])
+                    ],
+                    "api_status": "success"
                 }
-                for step in leg['steps']
-            ],
-            "api_status": "success"
-        }
-    except Exception as e:
-        print(f"❌ Google Maps API error: {str(e)}")
-        # Fallback to straight-line distance
-        straight_distance = calculate_distance(origin_lat, origin_lon, dest_lat, dest_lon)
-        return {
-            "duration": f"{int(straight_distance * 2)} min (estimated)",
-            "duration_seconds": int(straight_distance * 2 * 60),
-            "distance": f"{straight_distance:.1f} km (straight line)",
-            "distance_meters": int(straight_distance * 1000),
-            "polyline": "",
-            "route_steps": [],
-            "api_status": f"error: {str(e)}"
-        }
+        except Exception as e:
+            # Check if this is a known permission/legacy error to give a clean message
+            err_msg = str(e)
+            if "REQUEST_DENIED" in err_msg or "PERMISSION_DENIED" in err_msg:
+                print(f"[WARN] Google Maps API not enabled or restricted for this key (using straight-line distance fallback)")
+            else:
+                print(f"[ERR] Google Maps API error: {err_msg}")
+
+    # 3. Fallback to straight-line distance
+    straight_distance = calculate_distance(origin_lat, origin_lon, dest_lat, dest_lon)
+    return {
+        "duration": f"{int(straight_distance * 2)} min (estimated)",
+        "duration_seconds": int(straight_distance * 2 * 60),
+        "distance": f"{straight_distance:.1f} km (straight line)",
+        "distance_meters": int(straight_distance * 1000),
+        "polyline": "",
+        "route_steps": [],
+        "api_status": "fallback"
+    }
 
 @router.get("/nearest-ambulance")
 async def get_nearest_ambulance_route(
@@ -387,36 +418,27 @@ async def add_demo_ambulances(db: Session = Depends(get_db)):
     from decimal import Decimal
     
     demo_ambulances = [
-        {
-            "type_of_ambulance": "Basic",
-            "vehicle_number": "TN-07-BAS-001",
-            "no_of_staffs": 2,
-            "current_location": "Chennai Central Station",
-            "latitude": Decimal('13.0827'),
-            "longitude": Decimal('80.2707'),
-            "status": "available",
-            "fuel_level": 90
-        },
-        {
-            "type_of_ambulance": "Advanced",
-            "vehicle_number": "TN-07-ADV-002",
-            "no_of_staffs": 3,
-            "current_location": "Anna Nagar, Chennai",
-            "latitude": Decimal('13.0850'),
-            "longitude": Decimal('80.2200'),
-            "status": "available",
-            "fuel_level": 85
-        },
-        {
-            "type_of_ambulance": "ICU",
-            "vehicle_number": "TN-07-ICU-003",
-            "no_of_staffs": 4,
-            "current_location": "T. Nagar, Chennai",
-            "latitude": Decimal('13.0400'),
-            "longitude": Decimal('80.2400'),
-            "status": "available",
-            "fuel_level": 95
-        }
+        {"type_of_ambulance": "Basic", "vehicle_number": "TN-07-BAS-001", "no_of_staffs": 2, "current_location": "Chennai Central Station", "latitude": Decimal('13.0827'), "longitude": Decimal('80.2707'), "status": "available", "fuel_level": 95},
+        {"type_of_ambulance": "Advanced", "vehicle_number": "TN-07-ADV-002", "no_of_staffs": 3, "current_location": "Anna Nagar, Chennai", "latitude": Decimal('13.0850'), "longitude": Decimal('80.2200'), "status": "available", "fuel_level": 75},
+        {"type_of_ambulance": "ICU", "vehicle_number": "TN-07-ICU-003", "no_of_staffs": 4, "current_location": "T. Nagar, Chennai", "latitude": Decimal('13.0400'), "longitude": Decimal('80.2400'), "status": "dispatch", "fuel_level": 85},
+        {"type_of_ambulance": "Basic", "vehicle_number": "TN-07-BAS-004", "no_of_staffs": 2, "current_location": "Adyar, Chennai", "latitude": Decimal('12.9893'), "longitude": Decimal('80.2269'), "status": "available", "fuel_level": 85},
+        {"type_of_ambulance": "Advanced", "vehicle_number": "TN-07-ADV-005", "no_of_staffs": 3, "current_location": "Velachery, Chennai", "latitude": Decimal('12.9808'), "longitude": Decimal('80.2167'), "status": "dispatch", "fuel_level": 60},
+        {"type_of_ambulance": "ICU", "vehicle_number": "TN-07-ICU-006", "no_of_staffs": 4, "current_location": "Tambaram, Chennai", "latitude": Decimal('12.9269'), "longitude": Decimal('80.1159'), "status": "dispatch", "fuel_level": 90},
+        {"type_of_ambulance": "ICU", "vehicle_number": "TN-09-ICU-007", "no_of_staffs": 4, "current_location": "SIMS Hospital, Vadapalani, Chennai", "latitude": Decimal('13.0524'), "longitude": Decimal('80.2119'), "status": "available", "fuel_level": 92},
+        {"type_of_ambulance": "Advanced", "vehicle_number": "TN-02-ADV-008", "no_of_staffs": 3, "current_location": "Kilpauk Medical College, Chennai", "latitude": Decimal('13.0827'), "longitude": Decimal('80.2407'), "status": "available", "fuel_level": 88},
+        {"type_of_ambulance": "Basic", "vehicle_number": "TN-10-BAS-009", "no_of_staffs": 2, "current_location": "Koyambedu Junction, Chennai", "latitude": Decimal('13.0694'), "longitude": Decimal('80.1948'), "status": "available", "fuel_level": 80},
+        {"type_of_ambulance": "ICU", "vehicle_number": "TN-22-ICU-010", "no_of_staffs": 4, "current_location": "MIOT International, Manapakkam, Chennai", "latitude": Decimal('13.0205'), "longitude": Decimal('80.1772'), "status": "available", "fuel_level": 95},
+        {"type_of_ambulance": "Advanced", "vehicle_number": "TN-22-ADV-011", "no_of_staffs": 3, "current_location": "Guindy Metro Station, Chennai", "latitude": Decimal('13.0067'), "longitude": Decimal('80.2026'), "status": "available", "fuel_level": 85},
+        {"type_of_ambulance": "ICU", "vehicle_number": "TN-14-ICU-012", "no_of_staffs": 4, "current_location": "Gleneagles Global Health City, Perumbakkam, Chennai", "latitude": Decimal('12.8994'), "longitude": Decimal('80.2006'), "status": "available", "fuel_level": 90},
+        {"type_of_ambulance": "Advanced", "vehicle_number": "TN-14-ADV-013", "no_of_staffs": 3, "current_location": "Sholinganallur Junction, OMR, Chennai", "latitude": Decimal('12.9010'), "longitude": Decimal('80.2279'), "status": "available", "fuel_level": 78},
+        {"type_of_ambulance": "Basic", "vehicle_number": "TN-07-BAS-014", "no_of_staffs": 2, "current_location": "Thiruvanmiyur Bus Terminus, Chennai", "latitude": Decimal('12.9830'), "longitude": Decimal('80.2594'), "status": "available", "fuel_level": 82},
+        {"type_of_ambulance": "Advanced", "vehicle_number": "TN-04-ADV-015", "no_of_staffs": 3, "current_location": "Government Royapettah Hospital, Chennai", "latitude": Decimal('13.0538'), "longitude": Decimal('80.2618'), "status": "available", "fuel_level": 84},
+        {"type_of_ambulance": "ICU", "vehicle_number": "TN-04-ICU-016", "no_of_staffs": 4, "current_location": "Mylapore Tank / CSI Kalyani Hospital, Chennai", "latitude": Decimal('13.0368'), "longitude": Decimal('80.2676'), "status": "available", "fuel_level": 91},
+        {"type_of_ambulance": "Advanced", "vehicle_number": "TN-11-ADV-017", "no_of_staffs": 3, "current_location": "Rela Hospital, Chromepet, Chennai", "latitude": Decimal('12.9516'), "longitude": Decimal('80.1462'), "status": "available", "fuel_level": 87},
+        {"type_of_ambulance": "Basic", "vehicle_number": "TN-09-BAS-018", "no_of_staffs": 2, "current_location": "Sri Ramachandra Hospital, Porur, Chennai", "latitude": Decimal('13.0382'), "longitude": Decimal('80.1565'), "status": "available", "fuel_level": 86},
+        {"type_of_ambulance": "Advanced", "vehicle_number": "TN-05-ADV-019", "no_of_staffs": 3, "current_location": "Perambur Railway Hospital, Chennai", "latitude": Decimal('13.1143'), "longitude": Decimal('80.2443'), "status": "available", "fuel_level": 89},
+        {"type_of_ambulance": "ICU", "vehicle_number": "TN-02-ICU-020", "no_of_staffs": 4, "current_location": "Apollo Hospital, Greams Road, Chennai", "latitude": Decimal('13.0583'), "longitude": Decimal('80.2508'), "status": "available", "fuel_level": 94},
+        {"type_of_ambulance": "Advanced", "vehicle_number": "TN-12-ADV-029", "no_of_staffs": 3, "current_location": "Government Hospital, Avadi, Chennai", "latitude": Decimal('13.1147'), "longitude": Decimal('80.1018'), "status": "available", "fuel_level": 90}
     ]
     
     added_ambulances = []
@@ -451,7 +473,7 @@ async def debug_api_status():
         "timestamp": __import__('datetime').datetime.now().isoformat()
     }
     
-    print(f"🔍 API Status Debug: {status}")
+    print(f"[DEBUG] API Status Debug: {status}")
     return status
 
 @router.get("/debug/test-route")
@@ -462,7 +484,7 @@ async def debug_test_route():
         "destination": (13.0400, 80.2400)  # T. Nagar
     }
     
-    print(f"🧪 Testing Google Maps API with Chennai route...")
+    print(f"[TEST] Testing Google Maps API with Chennai route...")
     
     try:
         route_info = get_route_info(
@@ -478,7 +500,7 @@ async def debug_test_route():
             "timestamp": __import__('datetime').datetime.now().isoformat()
         }
         
-        print(f"🧪 Test Route Result: {result['success']}")
+        print(f"[TEST] Test Route Result: {result['success']}")
         return result
         
     except Exception as e:
@@ -490,7 +512,7 @@ async def debug_test_route():
             "timestamp": __import__('datetime').datetime.now().isoformat()
         }
         
-        print(f"🧪 Test Route Failed: {e}")
+        print(f"[TEST] Test Route Failed: {e}")
         return error_result
 
 @router.get("/debug/system-info")
@@ -529,7 +551,7 @@ async def debug_system_info():
         "timestamp": __import__('datetime').datetime.now().isoformat()
     }
     
-    print(f"🔍 System Info Debug: {system_info}")
+    print(f"[DEBUG] System Info Debug: {system_info}")
     return system_info
 
 @router.get("/debug/ambulance-search")
@@ -540,7 +562,7 @@ async def debug_ambulance_search(
     db: Session = Depends(get_db)
 ):
     """Debug endpoint to test ambulance search functionality."""
-    print(f"🔍 Debugging ambulance search for {ambulance_type} at ({patient_lat}, {patient_lon})")
+    print(f"[SEARCH] Debugging ambulance search for {ambulance_type} at ({patient_lat}, {patient_lon})")
     
     # Test database query
     try:
@@ -553,7 +575,7 @@ async def debug_ambulance_search(
             models.Ambulance.longitude.isnot(None)
         ).all()
         
-        print(f"📊 Database Query Results:")
+        print(f"[INFO] Database Query Results:")
         print(f"   Total ambulances: {len(all_ambulances)}")
         print(f"   Available ambulances: {len(available_ambulances)}")
         print(f"   Ambulances with coordinates: {len(ambulances_with_coords)}")
@@ -582,7 +604,7 @@ async def debug_ambulance_search(
             "timestamp": __import__('datetime').datetime.now().isoformat()
         }
         
-        print(f"🔍 Ambulance Search Debug: Found = {result['search_result']['found_ambulance']}")
+        print(f"[SEARCH] Ambulance Search Debug: Found = {result['search_result']['found_ambulance']}")
         return result
         
     except Exception as e:
@@ -596,5 +618,5 @@ async def debug_ambulance_search(
             "timestamp": __import__('datetime').datetime.now().isoformat()
         }
         
-        print(f"🔍 Ambulance Search Debug Failed: {e}")
+        print(f"[ERR] Ambulance Search Debug Failed: {e}")
         return error_result

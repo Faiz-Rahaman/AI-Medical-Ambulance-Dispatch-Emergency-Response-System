@@ -31,10 +31,10 @@ try:
         gmaps = None
 except ImportError:
     gmaps = None
-    logger.warning("⚠️ googlemaps library not installed")
+    logger.warning("[WARN] googlemaps library not installed")
 except Exception as e:
     gmaps = None
-    logger.error(f"❌ Google Maps init error: {str(e)}")
+    logger.error(f"[ERR] Google Maps init error: {str(e)}")
 
 router = APIRouter()
 
@@ -82,10 +82,10 @@ def geocode_address(address: str) -> Optional[Tuple[float, float]]:
             lng = location['lng']
             return (lat, lng)
         else:
-            logger.warning(f"⚠️ Geocoding failed for: {address}")
+            logger.warning(f"[WARN] Geocoding failed for: {address}")
             return None
     except Exception as e:
-        logger.error(f"❌ Geocoding error: {str(e)}")
+        logger.error(f"[ERR] Geocoding error: {str(e)}")
         return None
 
 
@@ -161,7 +161,7 @@ async def handle_vapi_status(request: Request):
         try:
             body = await request.json()
         except Exception as json_error:
-            logger.error(f"❌ Invalid JSON in status webhook: {str(json_error)}")
+            logger.error(f"[ERR] Invalid JSON in status webhook: {str(json_error)}")
             return {"status": "error", "message": f"Invalid JSON format: {str(json_error)}"}
         
         # Extract call information
@@ -191,10 +191,10 @@ async def handle_vapi_status(request: Request):
             
             # Check if case was already created during the call
             if session.get("case_id"):
-                logger.info(f"✅ Call ended - Case {session.get('case_id')} already created")
+                logger.info(f"[OK] Call ended - Case {session.get('case_id')} already created")
             else:
                 # Case was not created during call - try to create from transcript as fallback
-                logger.warning(f"⚠️ Call ended without case - attempting fallback")
+                logger.warning(f"[WARN] Call ended without case - attempting fallback")
                 
                 # Get full transcript if available
                 transcript_text = " ".join(session.get("transcript", []))
@@ -240,22 +240,22 @@ async def handle_vapi_status(request: Request):
                                 case_data = triage_response.json()
                                 session["case_id"] = case_data.get("id")
                                 
-                            logger.info(f"✅ Case {case_data.get('id')} created (fallback)")
+                            logger.info(f"[OK] Case {case_data.get('id')} created (fallback)")
                         else:
-                            logger.warning(f"⚠️ Insufficient patient data for fallback case")
+                            logger.warning(f"[WARN] Insufficient patient data for fallback case")
                     
                     except Exception as e:
                         import traceback
                         error_trace = traceback.format_exc()
-                        logger.error(f"❌ Error creating case from VAPI call {call_id}: {str(e)}\n{error_trace}")
+                        logger.error(f"[ERR] Error creating case from VAPI call {call_id}: {str(e)}\n{error_trace}")
                 else:
-                    logger.warning(f"⚠️ No patient data available for fallback")
+                    logger.warning(f"[WARN] No patient data available for fallback")
         return {"status": "ok"}
         
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
-        logger.error(f"❌ Error handling VAPI status: {str(e)}\n{error_trace}")
+        logger.error(f"[ERR] Error handling VAPI status: {str(e)}\n{error_trace}")
         return {"status": "error", "message": str(e)}
 
 
@@ -270,7 +270,7 @@ async def handle_vapi_function_call(request: Request):
         try:
             body = await request.json()
         except Exception as json_error:
-            logger.error(f"❌ Invalid JSON in function call: {str(json_error)}")
+            logger.error(f"[ERR] Invalid JSON in function call: {str(json_error)}")
             from fastapi.responses import JSONResponse
             return JSONResponse(
                 status_code=200,
@@ -310,7 +310,7 @@ async def handle_vapi_function_call(request: Request):
                     try:
                         parameters = json.loads(arguments)
                     except json.JSONDecodeError as e:
-                        logger.error(f"❌ Failed to parse arguments: {str(e)}")
+                        logger.error(f"[ERR] Failed to parse arguments: {str(e)}")
                         parameters = {}
                 elif isinstance(arguments, dict):
                     parameters = arguments
@@ -339,7 +339,7 @@ async def handle_vapi_function_call(request: Request):
                 parameters = arguments
         
         if not function_name:
-            logger.error(f"❌ Could not extract function name from request")
+            logger.error(f"[ERR] Could not extract function name from request")
             logger.error(f"   Body keys: {list(body.keys())}, Tool calls: {len(tool_calls) if tool_calls else 0}")
         
         if function_name:
@@ -424,7 +424,7 @@ async def handle_vapi_function_call(request: Request):
                         
                         if triage_response.status_code != 200:
                             error_text = triage_response.text
-                            logger.error(f"❌ Triage endpoint error ({triage_response.status_code}): {error_text}")
+                            logger.error(f"[ERR] Triage endpoint error ({triage_response.status_code}): {error_text}")
                             raise HTTPException(
                                 status_code=triage_response.status_code,
                                 detail=f"Triage endpoint error: {error_text}"
@@ -437,13 +437,13 @@ async def handle_vapi_function_call(request: Request):
                             raise ValueError("Case creation failed: No case ID returned")
                         
                     except httpx.TimeoutException:
-                        logger.error("❌ Timeout waiting for triage endpoint")
+                        logger.error("[ERR] Timeout waiting for triage endpoint")
                         raise HTTPException(
                             status_code=504,
                             detail="Triage endpoint timeout - case creation may still be in progress"
                         )
                     except httpx.RequestError as e:
-                        logger.error(f"❌ Network error calling triage endpoint: {str(e)}")
+                        logger.error(f"[ERR] Network error calling triage endpoint: {str(e)}")
                         raise HTTPException(
                             status_code=503,
                             detail=f"Unable to reach triage endpoint: {str(e)}"
@@ -465,17 +465,17 @@ async def handle_vapi_function_call(request: Request):
                     "case_id": case_data.get("id")
                 }
                 
-                logger.info(f"✅ Case {case_data.get('id')} created: {name} ({age}) - {symptoms[:50]}...")
+                logger.info(f"[OK] Case {case_data.get('id')} created: {name} ({age}) - {symptoms[:50]}...")
                 
             except httpx.HTTPStatusError as e:
                 error_detail = f"HTTP {e.response.status_code}: {e.response.text}"
-                logger.error(f"❌ HTTP Error creating case: {error_detail}")
+                logger.error(f"[ERR] HTTP Error creating case: {error_detail}")
                 result = {
                     "success": False,
                     "message": f"Error creating case: {error_detail}"
                 }
             except ValueError as e:
-                logger.error(f"❌ Validation Error: {str(e)}")
+                logger.error(f"[ERR] Validation Error: {str(e)}")
                 result = {
                     "success": False,
                     "message": f"Validation error: {str(e)}"
@@ -483,14 +483,14 @@ async def handle_vapi_function_call(request: Request):
             except Exception as e:
                 import traceback
                 error_trace = traceback.format_exc()
-                logger.error(f"❌ Error creating case via function call: {str(e)}\n{error_trace}")
+                logger.error(f"[ERR] Error creating case via function call: {str(e)}\n{error_trace}")
                 result = {
                     "success": False,
                     "message": f"Error creating case: {str(e)}"
                 }
         
         else:
-            logger.warning(f"⚠️ Unknown function: {function_name}")
+            logger.warning(f"[WARN] Unknown function: {function_name}")
             result = {
                 "success": False,
                 "message": f"Unknown function: {function_name}"
@@ -518,7 +518,7 @@ async def handle_vapi_function_call(request: Request):
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
-        logger.error(f"❌ Error handling VAPI function call: {str(e)}\n{error_trace}")
+        logger.error(f"[ERR] Error handling VAPI function call: {str(e)}\n{error_trace}")
         
         # Always return a valid response, even on error
         from fastapi.responses import JSONResponse
@@ -563,7 +563,7 @@ async def handle_vapi_server(request: Request):
         return {}
         
     except Exception as e:
-        logger.error(f"❌ VAPI server request error: {str(e)}")
+        logger.error(f"[ERR] VAPI server request error: {str(e)}")
         return {}
 
 
@@ -583,7 +583,7 @@ async def handle_vapi_end_call(request: Request):
         if call_id in vapi_call_sessions:
             session = vapi_call_sessions[call_id]
             if session.get("case_id"):
-                logger.info(f"✅ Call ended - Case {session.get('case_id')} exists")
+                logger.info(f"[OK] Call ended - Case {session.get('case_id')} exists")
         
         return {"status": "ok"}
         
@@ -696,11 +696,11 @@ async def handle_vapi_model_request(request: Request):
             "usage": llm_response.get("usage", {})
         }
         
-        logger.info(f"✅ LLM response forwarded to VAPI")
+        logger.info(f"[OK] LLM response forwarded to VAPI")
         return vapi_response
         
     except httpx.ConnectError:
-        logger.error("❌ Local LLM not available at http://localhost:1234")
+        logger.error("[ERR] Local LLM not available at http://localhost:1234")
         raise HTTPException(
             status_code=503,
             detail="Local LLM service is not available. Make sure your LLM server is running on http://localhost:1234"
@@ -743,7 +743,7 @@ async def initiate_vapi_call(
             response.raise_for_status()
             call_data = response.json()
         
-        logger.info(f"✅ VAPI call initiated: {call_data}")
+        logger.info(f"[OK] VAPI call initiated: {call_data}")
         return {
             "success": True,
             "call_id": call_data.get("id"),

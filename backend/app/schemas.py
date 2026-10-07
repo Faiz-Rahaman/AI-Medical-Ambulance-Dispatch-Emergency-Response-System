@@ -70,3 +70,70 @@ class ChatMessage(BaseModel):
 
     class Config:
         from_attributes = True
+
+# --- AUTH & USER SCHEMAS ---
+class UserRegister(BaseModel):
+    name: str
+    email: str
+    password: str
+    role: Optional[str] = "user"  # "admin" | "hospital" | "user"
+    hospital_id: Optional[int] = None
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+class UserResponse(BaseModel):
+    id: int
+    name: str
+    email: str
+    role: str
+    hospital_id: Optional[int] = None
+    is_active: int
+    hospital_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    hospital_id: Optional[int] = None
+    is_active: Optional[int] = None
+    password: Optional[str] = None
+
+# --- HOSPITAL SCHEMAS ---
+class HospitalCreate(BaseModel):
+    name: str
+    address: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    contact: Optional[str] = None
+    available_beds: Optional[int] = 10
+
+class HospitalUpdate(BaseModel):
+    name: Optional[str] = None
+    address: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    contact: Optional[str] = None
+    available_beds: Optional[int] = None
+
+class HospitalResponse(BaseModel):
+    id: int
+    name: str
+    address: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    contact: Optional[str] = None
+    available_beds: Optional[int] = 10
+
+    class Config:
+        from_attributes = True
+

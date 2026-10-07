@@ -1,9 +1,11 @@
 import os
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
 
-load_dotenv()
+_env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(_env_path)
 
 LOCAL_LLM_URL = os.getenv("LOCAL_LLM_URL", "http://localhost:1234/v1/chat/completions")
 LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "google/gemma-4-12b-qat")

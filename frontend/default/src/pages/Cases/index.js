@@ -11,7 +11,7 @@ const Cases = () => {
         setCasesLoading(true);
         setCasesError(false);
         try {
-            const res = await fetch('http://localhost:8000/triage/all-recent', {
+            const res = await fetch(`${process.env.REACT_APP_API_URL}/triage/all-recent`, {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',

@@ -278,11 +278,18 @@ async def llm_chat(
                     logging.info(f"Parsed patient data: {triage_payload}")
                     
                     triage_url = str(fastapi_request.base_url) + "triage/"
+                    is_pending_case = False
                     async with httpx.AsyncClient() as client:
                         triage_response = await client.post(triage_url, json=triage_payload, timeout=30)
                         triage_response.raise_for_status()
+                        triage_data = triage_response.json()
+                        if triage_data.get("status") == "Pending":
+                            is_pending_case = True
                     
-                    final_user_message = "Thank you, all details have been recorded. Help is on the way."
+                    if is_pending_case:
+                        final_user_message = "Thank you, all your emergency details have been recorded. All immediate local units are currently busy; your request has been placed in the highest priority queue, and a standby reserve unit has been alerted."
+                    else:
+                        final_user_message = "Thank you, all details have been recorded. Help is on the way."
                     llm_response_text = final_user_message
                     
                     # Add the final response to chat history before deleting session

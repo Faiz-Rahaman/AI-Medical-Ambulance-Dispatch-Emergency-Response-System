@@ -27,7 +27,7 @@ const Ambulances = () => {
         setLoading(true);
         setError(false);
         try {
-            const res = await fetch('http://localhost:8000/admin/ambulances', {
+            const res = await fetch(`${process.env.REACT_APP_API_URL}/admin/ambulances`, {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
@@ -118,7 +118,7 @@ const Ambulances = () => {
                 return;
             }
 
-            const response = await axios.post('http://localhost:8000/admin/ambulances', submitData, {
+            const response = await axios.post(`${process.env.REACT_APP_API_URL}/admin/ambulances`, submitData, {
                 headers: {
                     'Content-Type': 'application/json',
                 },

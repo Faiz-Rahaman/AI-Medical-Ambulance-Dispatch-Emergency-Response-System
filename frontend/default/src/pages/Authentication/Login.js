@@ -1,103 +1,85 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Card, CardBody, Col, Container, Input, Label, Row, Button, Form, FormFeedback, Alert, Spinner } from 'reactstrap';
 import ParticlesAuth from "../AuthenticationInner/ParticlesAuth";
-
-//redux
-import { useSelector, useDispatch } from "react-redux";
-
-import { Link } from "react-router-dom";
-import withRouter from "../../Components/Common/withRouter";
-// Formik validation
+import { Link, useNavigate } from "react-router-dom";
 import * as Yup from "yup";
 import { useFormik } from "formik";
-
-// actions
-import { loginUser, socialLogin, resetLoginFlag } from "../../slices/thunks";
-
 import logoLight from "../../assets/images/logo-light.png";
-import { createSelector } from 'reselect';
-//import images
+import { setAuthorization } from "../../helpers/api_helper";
 
-const Login = (props) => {
-    const dispatch = useDispatch();
+const API_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
 
-    const selectLayoutState = (state) => state;
-    const loginpageData = createSelector(
-        selectLayoutState,
-        (state) => ({
-            user: state.Account.user,
-            error: state.Login.error,
-            loading: state.Login.loading,
-            errorMsg: state.Login.errorMsg,
-        })
-    );
-    // Inside your component
-    const {
-        user, error, loading, errorMsg
-    } = useSelector(loginpageData);
+const Login = () => {
+    document.title = "Sign In | AI Ambulance Dispatch System";
+    const navigate = useNavigate();
 
-    const [userLogin, setUserLogin] = useState([]);
     const [passwordShow, setPasswordShow] = useState(false);
+    const [loading, setLoading] = useState(false);
+    const [loginError, setLoginError] = useState("");
 
+    const handleLoginSuccess = (data) => {
+        const userData = {
+            ...data.user,
+            token: data.access_token,
+        };
+        sessionStorage.setItem("authUser", JSON.stringify(userData));
+        localStorage.setItem("authUser", JSON.stringify(userData));
+        setAuthorization(data.access_token);
 
-    useEffect(() => {
-        if (user && user) {
-            const updatedUserData = process.env.REACT_APP_DEFAULTAUTH === "firebase" ? user.multiFactor.user.email : user.email;
-            const updatedUserPassword = process.env.REACT_APP_DEFAULTAUTH === "firebase" ? "" : user.confirm_password;
-            setUserLogin({
-                email: updatedUserData,
-                password: updatedUserPassword
+        // Role-based redirect
+        if (data.user.role === "hospital") {
+            navigate("/hospital/cases");
+        } else if (data.user.role === "user") {
+            navigate("/user/emergency");
+        } else {
+            navigate("/dashboard");
+        }
+    };
+
+    const performLogin = async (email, password) => {
+        setLoading(true);
+        setLoginError("");
+        try {
+            const res = await fetch(`${API_URL}/auth/login`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
             });
-        }
-        // Immediately redirect to dashboard without auth checks
-        if (props?.router?.navigate) {
-            props.router.navigate('/dashboard');
-        }
-    }, [user, props?.router]);
 
-    // This is the new, modified code block
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.detail || "Invalid login credentials");
+            }
+
+            handleLoginSuccess(data);
+        } catch (err) {
+            setLoginError(err.message || "Failed to connect to backend server");
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const validation = useFormik({
-    // enableReinitialize : use this flag when initial values needs to be changed
-    enableReinitialize: true,
-
-    initialValues: {
-        email: userLogin.email || "admin@themesbrand.com" || '',
-        password: userLogin.password || "123456" || '',
-    },
-    validationSchema: Yup.object({
-        email: Yup.string().required("Please Enter Your Email"),
-        password: Yup.string().required("Please Enter Your Password"),
-    }),
-    // New "After" Code
-    // New "After" Code
-    onSubmit: () => {
-        // Directly navigate to dashboard, skip login entirely
-        if (props?.router?.navigate) {
-            props.router.navigate('/dashboard');
+        initialValues: {
+            email: "admin@emergency.com",
+            password: "admin123",
+        },
+        validationSchema: Yup.object({
+            email: Yup.string().email("Invalid email format").required("Please enter your email"),
+            password: Yup.string().required("Please enter your password"),
+        }),
+        onSubmit: (values) => {
+            performLogin(values.email, values.password);
         }
-    }
     });
-    const signIn = type => {
-        dispatch(socialLogin(type, props.router.navigate));
+
+    // Quick demo login shortcuts
+    const quickLogin = (email, password) => {
+        validation.setFieldValue("email", email);
+        validation.setFieldValue("password", password);
+        performLogin(email, password);
     };
 
-    //handleTwitterLoginResponse
-    // const twitterResponse = e => {}
-
-    //for facebook and google authentication
-    const socialResponse = type => {
-        signIn(type);
-    };
-
-
-    useEffect(() => {
-        if (errorMsg) {
-            setTimeout(() => {
-                dispatch(resetLoginFlag());
-            }, 3000);
-        }
-    }, [dispatch, errorMsg]);
-    document.title = "Basic SignIn | Velzon - React Admin & Dashboard Template";
     return (
         <React.Fragment>
             <ParticlesAuth>
@@ -108,126 +90,140 @@ const Login = (props) => {
                                 <div className="text-center mt-sm-5 mb-4 text-white-50">
                                     <div>
                                         <Link to="/" className="d-inline-block auth-logo">
-                                            <img src={logoLight} alt="" height="20" />
+                                            <img src={logoLight} alt="AI Medical Dispatch" height="28" />
                                         </Link>
                                     </div>
-                                    <p className="mt-3 fs-15 fw-medium">Premium Admin & Dashboard Template</p>
+                                    <p className="mt-3 fs-15 fw-medium text-white">
+                                        🚨 AI-Powered Smart Ambulance Dispatch & Triage System
+                                    </p>
                                 </div>
                             </Col>
                         </Row>
 
                         <Row className="justify-content-center">
                             <Col md={8} lg={6} xl={5}>
-                                <Card className="mt-4">
+                                <Card className="mt-2 shadow-lg border-0">
                                     <CardBody className="p-4">
                                         <div className="text-center mt-2">
-                                            <h5 className="text-primary">Welcome Back !</h5>
-                                            <p className="text-muted">Sign in to continue to Velzon.</p>
+                                            <h5 className="text-primary fs-18">Welcome Back!</h5>
+                                            <p className="text-muted">Sign in to access your role-specific emergency portal.</p>
                                         </div>
-                                        {error && error ? (<Alert color="danger"> {error} </Alert>) : null}
-                                        <div className="p-2 mt-4">
-                                            <Form
-                                                onSubmit={(e) => {
-                                                    e.preventDefault();
-                                                    validation.handleSubmit();
-                                                    return false;
-                                                }}
-                                                action="#">
 
+                                        {loginError && (
+                                            <Alert color="danger" className="mt-3">
+                                                <i className="ri-error-warning-line me-2"></i>
+                                                {loginError}
+                                            </Alert>
+                                        )}
+
+                                        <div className="p-2 mt-2">
+                                            <Form onSubmit={validation.handleSubmit}>
                                                 <div className="mb-3">
-                                                    <Label htmlFor="email" className="form-label">Email</Label>
+                                                    <Label htmlFor="email" className="form-label">Email Address</Label>
                                                     <Input
+                                                        id="email"
                                                         name="email"
                                                         className="form-control"
-                                                        placeholder="Enter email"
+                                                        placeholder="Enter your email"
                                                         type="email"
                                                         onChange={validation.handleChange}
                                                         onBlur={validation.handleBlur}
-                                                        value={validation.values.email || ""}
-                                                        invalid={
-                                                            validation.touched.email && validation.errors.email ? true : false
-                                                        }
+                                                        value={validation.values.email}
+                                                        invalid={validation.touched.email && !!validation.errors.email}
                                                     />
-                                                    {validation.touched.email && validation.errors.email ? (
+                                                    {validation.touched.email && validation.errors.email && (
                                                         <FormFeedback type="invalid">{validation.errors.email}</FormFeedback>
-                                                    ) : null}
+                                                    )}
                                                 </div>
 
                                                 <div className="mb-3">
-                                                    <div className="float-end">
-                                                        <Link to="/forgot-password" className="text-muted">Forgot password?</Link>
-                                                    </div>
                                                     <Label className="form-label" htmlFor="password-input">Password</Label>
                                                     <div className="position-relative auth-pass-inputgroup mb-3">
                                                         <Input
+                                                            id="password-input"
                                                             name="password"
-                                                            value={validation.values.password || ""}
+                                                            value={validation.values.password}
                                                             type={passwordShow ? "text" : "password"}
                                                             className="form-control pe-5"
-                                                            placeholder="Enter Password"
+                                                            placeholder="Enter password"
                                                             onChange={validation.handleChange}
                                                             onBlur={validation.handleBlur}
-                                                            invalid={
-                                                                validation.touched.password && validation.errors.password ? true : false
-                                                            }
+                                                            invalid={validation.touched.password && !!validation.errors.password}
                                                         />
-                                                        {validation.touched.password && validation.errors.password ? (
+                                                        {validation.touched.password && validation.errors.password && (
                                                             <FormFeedback type="invalid">{validation.errors.password}</FormFeedback>
-                                                        ) : null}
-                                                        <button className="btn btn-link position-absolute end-0 top-0 text-decoration-none text-muted" type="button" id="password-addon" onClick={() => setPasswordShow(!passwordShow)}><i className="ri-eye-fill align-middle"></i></button>
+                                                        )}
+                                                        <button
+                                                            className="btn btn-link position-absolute end-0 top-0 text-decoration-none text-muted"
+                                                            type="button"
+                                                            id="password-addon"
+                                                            onClick={() => setPasswordShow(!passwordShow)}
+                                                        >
+                                                            <i className={passwordShow ? "ri-eye-off-fill align-middle" : "ri-eye-fill align-middle"}></i>
+                                                        </button>
                                                     </div>
-                                                </div>
-
-                                                <div className="form-check">
-                                                    <Input className="form-check-input" type="checkbox" value="" id="auth-remember-check" />
-                                                    <Label className="form-check-label" htmlFor="auth-remember-check">Remember me</Label>
                                                 </div>
 
                                                 <div className="mt-4">
-                                                    <Button color="success" disabled={error ? null : loading ? true : false} className="btn btn-success w-100" type="submit">
-                                                        {loading ? <Spinner size="sm" className='me-2'> Loading... </Spinner> : null}
+                                                    <Button color="primary" className="btn btn-primary w-100" type="submit" disabled={loading}>
+                                                        {loading ? <Spinner size="sm" className="me-2" /> : <i className="ri-login-box-line me-1"></i>}
                                                         Sign In
                                                     </Button>
                                                 </div>
-
-                                                <div className="mt-4 text-center">
-                                                    <div className="signin-other-title">
-                                                        <h5 className="fs-13 mb-4 title">Sign In with</h5>
-                                                    </div>
-                                                    <div>
-                                                        <Link
-                                                            to="#"
-                                                            className="btn btn-primary btn-icon me-1"
-                                                            onClick={e => {
-                                                                e.preventDefault();
-                                                                socialResponse("facebook");
-                                                            }}
-                                                        >
-                                                            <i className="ri-facebook-fill fs-16" />
-                                                        </Link>
-                                                        <Link
-                                                            to="#"
-                                                            className="btn btn-danger btn-icon me-1"
-                                                            onClick={e => {
-                                                                e.preventDefault();
-                                                                socialResponse("google");
-                                                            }}
-                                                        >
-                                                            <i className="ri-google-fill fs-16" />
-                                                        </Link>
-                                                        <Button color="dark" className="btn-icon"><i className="ri-github-fill fs-16"></i></Button>{" "}
-                                                        <Button color="info" className="btn-icon"><i className="ri-twitter-fill fs-16"></i></Button>
-                                                    </div>
-                                                </div>
                                             </Form>
+
+                                            {/* Quick Demo Role Logins */}
+                                            <div className="mt-4 pt-2 border-top">
+                                                <p className="text-muted text-center fs-12 mb-2 fw-semibold">QUICK DEMO ACCESS (CLICK TO SWITCH ROLE)</p>
+                                                <div className="d-grid gap-2">
+                                                    <Button
+                                                        color="danger"
+                                                        outline
+                                                        size="sm"
+                                                        className="d-flex align-items-center justify-content-between"
+                                                        onClick={() => quickLogin("admin@emergency.com", "admin123")}
+                                                        disabled={loading}
+                                                    >
+                                                        <span><i className="ri-shield-keyhole-line me-2 text-danger"></i><strong>Admin Panel</strong></span>
+                                                        <span className="badge bg-danger-subtle text-danger">Full Control</span>
+                                                    </Button>
+                                                    <Button
+                                                        color="info"
+                                                        outline
+                                                        size="sm"
+                                                        className="d-flex align-items-center justify-content-between"
+                                                        onClick={() => quickLogin("hospital@apollo.com", "hospital123")}
+                                                        disabled={loading}
+                                                    >
+                                                        <span><i className="ri-hospital-line me-2 text-info"></i><strong>Hospital Portal</strong></span>
+                                                        <span className="badge bg-info-subtle text-info">Apollo Dispatch</span>
+                                                    </Button>
+                                                    <Button
+                                                        color="success"
+                                                        outline
+                                                        size="sm"
+                                                        className="d-flex align-items-center justify-content-between"
+                                                        onClick={() => quickLogin("user@emergency.com", "user123")}
+                                                        disabled={loading}
+                                                    >
+                                                        <span><i className="ri-user-heart-line me-2 text-success"></i><strong>Citizen / User</strong></span>
+                                                        <span className="badge bg-success-subtle text-success">SOS & Tracking</span>
+                                                    </Button>
+                                                </div>
+                                            </div>
+
                                         </div>
                                     </CardBody>
                                 </Card>
 
-                                <div className="mt-4 text-center">
-                                    <p className="mb-0">Don't have an account ? <Link to="/register" className="fw-semibold text-primary text-decoration-underline"> Signup </Link> </p>
+                                <div className="mt-3 text-center">
+                                    <p className="mb-0 text-white-50">
+                                        Don't have an account?{" "}
+                                        <Link to="/register" className="fw-semibold text-white text-decoration-underline">
+                                            Register Here
+                                        </Link>
+                                    </p>
                                 </div>
-
                             </Col>
                         </Row>
                     </Container>
@@ -237,4 +233,4 @@ const Login = (props) => {
     );
 };
 
-export default withRouter(Login);
+export default Login;

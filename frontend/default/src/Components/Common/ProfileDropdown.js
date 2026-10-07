@@ -1,107 +1,89 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Dropdown, DropdownItem, DropdownMenu, DropdownToggle } from 'reactstrap';
-import { createSelector } from 'reselect';
-import { useSelector } from 'react-redux';
-
-//import images
-import avatar1 from "../../assets/images/users/avatar-1.jpg";
+import { Dropdown, DropdownItem, DropdownMenu, DropdownToggle, Badge } from 'reactstrap';
+import { getLoggedinUser } from '../../helpers/api_helper';
 
 const ProfileDropdown = () => {
-
-
-    const profiledropdownData = createSelector(
-        (state) => state.Profile,
-        (state) => ({
-            user: state.user
-        })
-      );
-    // Inside your component
-    const {user} = useSelector(profiledropdownData);
-
-    const [userName, setUserName] = useState("Admin");
+    const [userData, setUserData] = useState({
+        name: "Admin",
+        email: "admin@emergency.com",
+        role: "admin",
+        hospital_name: null,
+    });
 
     useEffect(() => {
-        if (sessionStorage.getItem("authUser")) {
-            const obj = JSON.parse(sessionStorage.getItem("authUser"));
-            setUserName(process.env.REACT_APP_DEFAULTAUTH === "fake" ? obj.username === undefined ? user.first_name ? user.first_name : obj.data.first_name : "Admin" || "Admin" :
-                process.env.REACT_APP_DEFAULTAUTH === "firebase" ? obj.email && obj.email : "Admin"
-            );
+        const user = getLoggedinUser();
+        if (user) {
+            setUserData({
+                name: user.name || "User",
+                email: user.email || "",
+                role: user.role || "user",
+                hospital_name: user.hospital_name || null,
+            });
         }
-    }, [userName, user]);
+    }, []);
 
-    //Dropdown Toggle
+    // Dropdown Toggle
     const [isProfileDropdown, setIsProfileDropdown] = useState(false);
     const toggleProfileDropdown = () => {
         setIsProfileDropdown(!isProfileDropdown);
     };
+
+    const getRoleTitle = (role) => {
+        if (role === "admin") return "System Administrator";
+        if (role === "hospital") return userData.hospital_name || "Hospital Staff";
+        return "Citizen / Patient";
+    };
+
+    const getRoleBadge = (role) => {
+        if (role === "admin") return <Badge color="danger-subtle" className="text-danger ms-1">Admin</Badge>;
+        if (role === "hospital") return <Badge color="primary-subtle" className="text-primary ms-1">Hospital</Badge>;
+        return <Badge color="success-subtle" className="text-success ms-1">Citizen</Badge>;
+    };
+
     return (
         <React.Fragment>
             <Dropdown isOpen={isProfileDropdown} toggle={toggleProfileDropdown} className="ms-sm-3 header-item topbar-user">
                 <DropdownToggle tag="button" type="button" className="btn">
                     <span className="d-flex align-items-center">
-                        <img className="rounded-circle header-profile-user" src={avatar1}
-                            alt="Header Avatar" />
+                        <div className="rounded-circle header-profile-user bg-primary bg-opacity-10 d-inline-flex align-items-center justify-content-center text-primary" style={{ width: '34px', height: '34px' }}>
+                            <i className="ri-shield-user-line fs-18"></i>
+                        </div>
                         <span className="text-start ms-xl-2">
-                            <span className="d-none d-xl-inline-block ms-1 fw-medium user-name-text">{userName}</span>
-                            <span className="d-none d-xl-block ms-1 fs-12 text-muted user-name-sub-text">Founder</span>
+                            <span className="d-none d-xl-inline-block ms-1 fw-semibold user-name-text">
+                                {userData.name}
+                                {getRoleBadge(userData.role)}
+                            </span>
+                            <span className="d-none d-xl-block ms-1 fs-11 text-muted user-name-sub-text">
+                                {getRoleTitle(userData.role)}
+                            </span>
                         </span>
                     </span>
                 </DropdownToggle>
                 <DropdownMenu className="dropdown-menu-end">
-                    <h6 className="dropdown-header">Welcome {userName}!</h6>
+                    <h6 className="dropdown-header">Logged in as {userData.name}</h6>
+                    <div className="px-3 py-1 text-muted fs-11 border-bottom mb-2">
+                        {userData.email}
+                    </div>
                     <DropdownItem className='p-0'>
-                        <Link to= "/profile" className="dropdown-item">
+                        <Link to="/profile" className="dropdown-item">
                             <i className="mdi mdi-account-circle text-muted fs-16 align-middle me-1"></i>
-                            <span className="align-middle">Profile</span>
+                            <span className="align-middle">My Profile</span>
                         </Link>
                     </DropdownItem>
-                    <DropdownItem className='p-0'>
-                        <Link to= "/apps-chat" className="dropdown-item">
-                            <i className="mdi mdi-message-text-outline text-muted fs-16 align-middle me-1"></i> <span
-                                className="align-middle">Messages</span>
-                        </Link>
-                    </DropdownItem>
-                    <DropdownItem className='p-0'>
-                        <Link to="#" className="dropdown-item">
-                            <i className="mdi mdi-calendar-check-outline text-muted fs-16 align-middle me-1"></i> <span
-                                className="align-middle">Taskboard</span>
-                        </Link>
-                    </DropdownItem>
-                    <DropdownItem className='p-0'>
-                        <Link to= "/pages-faqs" className="dropdown-item">
-                            <i
-                                className="mdi mdi-lifebuoy text-muted fs-16 align-middle me-1"></i> <span
-                                    className="align-middle">Help</span>
-                        </Link>
-                    </DropdownItem>
+                    {userData.role === "admin" && (
+                        <DropdownItem className='p-0'>
+                            <Link to="/admin/users" className="dropdown-item">
+                                <i className="mdi mdi-account-multiple-outline text-muted fs-16 align-middle me-1"></i>
+                                <span className="align-middle">User Management</span>
+                            </Link>
+                        </DropdownItem>
+                    )}
                     <div className="dropdown-divider"></div>
                     <DropdownItem className='p-0'>
-                        <Link to= "/pages-profile" className="dropdown-item">
-                            <i
-                                className="mdi mdi-wallet text-muted fs-16 align-middle me-1"></i> <span
-                                    className="align-middle">Balance : <b>$5971.67</b></span>
-                        </Link>
-                    </DropdownItem >
-                    <DropdownItem className='p-0'>
-                        <Link to= "/pages-profile-settings" className="dropdown-item">
-                            <span
-                                className="badge bg-success-subtle text-success mt-1 float-end">New</span><i
-                                    className="mdi mdi-cog-outline text-muted fs-16 align-middle me-1"></i> <span
-                                        className="align-middle">Settings</span>
-                        </Link>
-                    </DropdownItem>
-                    <DropdownItem className='p-0'>
-                        <Link to= "/auth-lockscreen-basic" className="dropdown-item">
-                            <i
-                                className="mdi mdi-lock text-muted fs-16 align-middle me-1"></i> <span className="align-middle">Lock screen</span>
-                        </Link>
-                    </DropdownItem>
-                    <DropdownItem className='p-0'>
-                        <Link to= "/logout" className="dropdown-item">
-                            <i
-                                className="mdi mdi-logout text-muted fs-16 align-middle me-1"></i> <span
-                                    className="align-middle" data-key="t-logout">Logout</span>
+                        <Link to="/logout" className="dropdown-item text-danger">
+                            <i className="mdi mdi-logout text-danger fs-16 align-middle me-1"></i>
+                            <span className="align-middle" data-key="t-logout">Log Out</span>
                         </Link>
                     </DropdownItem>
                 </DropdownMenu>
