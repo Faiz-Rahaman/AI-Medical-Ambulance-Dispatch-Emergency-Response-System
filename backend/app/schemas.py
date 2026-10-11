@@ -11,6 +11,7 @@ class CaseInput(BaseModel):
     location: str
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    user_id: Optional[int] = None
     # This field will be added by medicalchat.py before calling the triage endpoint
     chat_history: Optional[List[dict]] = None
 

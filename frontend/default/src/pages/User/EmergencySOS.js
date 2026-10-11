@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   Container,
   Row,
@@ -11,12 +11,27 @@ import {
   Input,
   Label,
   Badge,
+  Collapse,
 } from "reactstrap";
 import BreadCrumb from "../../Components/Common/BreadCrumb";
 import { useNavigate } from "react-router-dom";
 import { getLoggedinUser } from "../../helpers/api_helper";
+import { useJsApiLoader } from '@react-google-maps/api';
+import GoogleMapPicker from './GoogleMapPicker';
 
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
+// Must match GoogleMapsRoute.js libraries exactly to prevent '@react-google-maps/api' loader collision
+const GMAPS_LIBRARIES = ['geometry', 'places'];
+
+// Standard local reference points (accurately surveyed coordinates)
+const LOCATION_PRESETS = [
+  { name: "🎓 Amrita College, Vengal", lat: 13.2355, lng: 80.0135, landmark: "Amrita Vishwa Vidyapeetham Campus, Vengal, Tiruvallur" },
+  { name: "🏥 Vengal Village PHC", lat: 13.2325, lng: 80.0110, landmark: "Vengal Primary Health Centre, Tiruvallur" },
+  { name: "🚑 Thamaraipakkam Koot Road", lat: 13.2160, lng: 80.0410, landmark: "Thamaraipakkam Junction, Vengal Road" },
+  { name: "Chromepet / Rela Hospital", lat: 12.9516, lng: 80.1462, landmark: "Rela Hospital / Chromepet, Chennai" },
+  { name: "Pallavaram Center", lat: 12.9675, lng: 80.1491, landmark: "GST Road, Pallavaram, Chennai" },
+  { name: "Chennai Central", lat: 13.0827, lng: 80.2707, landmark: "Chennai Central / Park Town" },
+];
 
 const EmergencySOS = () => {
   document.title = "Emergency SOS | AI Ambulance Dispatch";
@@ -25,59 +40,157 @@ const EmergencySOS = () => {
   const user = getLoggedinUser();
   const token = user?.token;
 
-  const [location, setLocation] = useState({ latitude: null, longitude: null });
+  // Retrieve previously saved location to guarantee consistency across reloads
+  const getSavedLocation = () => {
+    try {
+      const saved = localStorage.getItem("user_emergency_location");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.latitude && parsed.longitude) {
+          return {
+            latitude: Number(parsed.latitude),
+            longitude: Number(parsed.longitude),
+            address: parsed.address || "Saved Location",
+          };
+        }
+      }
+    } catch (e) {
+      console.warn("Could not read saved location:", e);
+    }
+    // Default starting point: Amrita College Campus, Vengal Village
+    return {
+      latitude: 13.2355,
+      longitude: 80.0135,
+      address: "Amrita Vishwa Vidyapeetham Campus, Vengal Village, Tiruvallur",
+    };
+  };
+
+  const initialLoc = getSavedLocation();
+  const [location, setLocation] = useState({ latitude: initialLoc.latitude, longitude: initialLoc.longitude });
+  const [address, setAddress] = useState(initialLoc.address);
   const [locating, setLocating] = useState(false);
-  const [address, setAddress] = useState("");
   const [emergencyType, setEmergencyType] = useState("Cardiac / Heart Emergency");
   const [notes, setNotes] = useState("");
   const [contact, setContact] = useState(user?.email || "");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [showManualCoords, setShowManualCoords] = useState(false);
+  const [manualLat, setManualLat] = useState(String(initialLoc.latitude));
+  const [manualLng, setManualLng] = useState(String(initialLoc.longitude));
 
-  // Location presets for instant selection
-  const locationPresets = [
-    { name: "Pallavaram, Chennai", lat: 12.9675, lng: 80.1491, landmark: "GST Road / Pallavaram Station, Chennai" },
-    { name: "Vengal College / Tiruvallur", lat: 13.2340, lng: 80.0120, landmark: "Vengal College / Primary Health Centre, Tiruvallur" },
-    { name: "Tambaram / Chromepet", lat: 12.9516, lng: 80.1462, landmark: "Rela Hospital / Chromepet, Chennai" },
-    { name: "Chennai Central", lat: 13.0827, lng: 80.2707, landmark: "Chennai Central / Park Town" },
-  ];
+  const autocompleteInputRef = useRef(null);
+  const autocompleteRef = useRef(null);
 
-  // Auto-fetch GPS coordinates on page load (with Pallavaram fallback)
-  useEffect(() => {
-    fetchCurrentLocation();
+  const apiKey = process.env.REACT_APP_GOOGLE_MAPS_API_KEY || 'AIzaSyBIcmRu-yA62s2Js4RtyJfsFKf9Rm-Xp6w';
+
+  // Load Google Maps JS API with Places and Geometry libraries
+  const { isLoaded: mapsLoaded } = useJsApiLoader({
+    id: 'google-map-script',
+    googleMapsApiKey: apiKey,
+    libraries: GMAPS_LIBRARIES,
+  });
+
+  // Central function to update coordinates, address & persist to localStorage
+  const updateLocation = useCallback((lat, lng, newAddress) => {
+    const validLat = Number(parseFloat(lat).toFixed(6));
+    const validLng = Number(parseFloat(lng).toFixed(6));
+
+    setLocation({ latitude: validLat, longitude: validLng });
+    setManualLat(String(validLat));
+    setManualLng(String(validLng));
+
+    const finalAddress = newAddress || `${validLat}, ${validLng}`;
+    setAddress(finalAddress);
+
+    if (autocompleteInputRef.current) {
+      autocompleteInputRef.current.value = finalAddress;
+    }
+
+    // Persist to localStorage so location never randomly jumps or resets
+    try {
+      localStorage.setItem("user_emergency_location", JSON.stringify({
+        latitude: validLat,
+        longitude: validLng,
+        address: finalAddress,
+      }));
+    } catch (e) {
+      console.warn("Failed to store location:", e);
+    }
   }, []);
 
+  // Attach Google Places Autocomplete to the search input
+  const attachAutocomplete = useCallback(() => {
+    if (!mapsLoaded || !window.google?.maps?.places || !autocompleteInputRef.current) return;
+    if (autocompleteRef.current) return;
+
+    try {
+      const ac = new window.google.maps.places.Autocomplete(autocompleteInputRef.current, {
+        types: ['geocode', 'establishment'],
+        componentRestrictions: { country: 'in' },
+        fields: ['geometry', 'formatted_address', 'name'],
+      });
+
+      ac.addListener('place_changed', () => {
+        const place = ac.getPlace();
+        if (place?.geometry?.location) {
+          const lat = place.geometry.location.lat();
+          const lng = place.geometry.location.lng();
+          const placeAddr = place.formatted_address || place.name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+          updateLocation(lat, lng, placeAddr);
+        }
+      });
+
+      autocompleteRef.current = ac;
+    } catch (err) {
+      console.warn("Autocomplete attach warning:", err);
+    }
+  }, [mapsLoaded, updateLocation]);
+
+  useEffect(() => {
+    attachAutocomplete();
+  }, [attachAutocomplete]);
+
+  // Handle Preset Selection
   const selectPresetLocation = (preset) => {
-    setLocation({ latitude: preset.lat, longitude: preset.lng });
-    setAddress(preset.landmark);
+    updateLocation(preset.lat, preset.lng, preset.landmark);
   };
 
-  const fetchCurrentLocation = () => {
-    setLocating(true);
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          setLocation({
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-          });
-          setAddress(`GPS: ${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`);
-          setLocating(false);
-        },
-        (err) => {
-          console.warn("GPS error:", err);
-          // Fallback to Pallavaram, Chennai
-          setLocation({ latitude: 12.9675, longitude: 80.1491 });
-          setAddress("GST Road, Pallavaram, Chennai (Local Center)");
-          setLocating(false);
-        },
-        { enableHighAccuracy: true, timeout: 8000 }
-      );
+  // Manual Coordinate Input Submission
+  const applyManualCoords = () => {
+    const latNum = parseFloat(manualLat);
+    const lngNum = parseFloat(manualLng);
+    if (!isNaN(latNum) && !isNaN(lngNum) && latNum >= -90 && latNum <= 90 && lngNum >= -180 && lngNum <= 180) {
+      updateLocation(latNum, lngNum, `Coordinates: ${latNum.toFixed(5)}, ${lngNum.toFixed(5)}`);
     } else {
-      setLocation({ latitude: 12.9675, longitude: 80.1491 });
-      setAddress("GST Road, Pallavaram, Chennai");
-      setLocating(false);
+      setErrorMessage("Please enter valid latitude (-90 to 90) and longitude (-180 to 180).");
     }
+  };
+
+  // Optional on-demand device GPS detection (NEVER auto-run on page load)
+  const detectDeviceGPS = () => {
+    setLocating(true);
+    setErrorMessage("");
+
+    if (!("geolocation" in navigator)) {
+      setErrorMessage("Device geolocation is not supported by your browser.");
+      setLocating(false);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const detectedLat = pos.coords.latitude;
+        const detectedLng = pos.coords.longitude;
+        updateLocation(detectedLat, detectedLng, `Device GPS (${detectedLat.toFixed(5)}, ${detectedLng.toFixed(5)})`);
+        setLocating(false);
+      },
+      (err) => {
+        console.warn("GPS lookup notice:", err);
+        setLocating(false);
+        setErrorMessage("Could not detect device GPS. Please pick your location on the map or select a quick preset.");
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
   };
 
   const handleTriggerSOS = async () => {
@@ -86,9 +199,9 @@ const EmergencySOS = () => {
 
     try {
       const payload = {
-        latitude: location.latitude || 12.9675,
-        longitude: location.longitude || 80.1491,
-        location: address || "Pallavaram, Chennai",
+        latitude: location.latitude || 12.9516,
+        longitude: location.longitude || 80.1462,
+        location: address || "Chromepet, Chennai",
         symptoms: `${emergencyType}. ${notes}`.trim(),
         emergency_type: emergencyType.includes("Cardiac") || emergencyType.includes("Accident") ? "Critical" : "Standard",
         contact: contact,
@@ -136,9 +249,12 @@ const EmergencySOS = () => {
         <BreadCrumb title="Emergency SOS Dispatch" pageTitle="Citizen Portal" />
 
         {errorMessage && (
-          <Alert color="danger" className="mb-4">
-            <i className="ri-alarm-warning-fill me-2 fs-16"></i>
-            {errorMessage}
+          <Alert color="danger" className="mb-4 d-flex align-items-center justify-content-between">
+            <div>
+              <i className="ri-alarm-warning-fill me-2 fs-16"></i>
+              {errorMessage}
+            </div>
+            <button type="button" className="btn-close" onClick={() => setErrorMessage("")}></button>
           </Alert>
         )}
 
@@ -155,7 +271,7 @@ const EmergencySOS = () => {
 
                 <h3 className="fw-bold text-dark mt-2 mb-1">Need Immediate Medical Help?</h3>
                 <p className="text-muted fs-14 mb-4">
-                  Pressing SOS will broadcast your GPS location to the nearest available local ambulance and trauma center.
+                  Pressing SOS will broadcast your verified coordinates to the nearest available ambulance and trauma center.
                 </p>
 
                 {/* Big Animated SOS Button */}
@@ -187,51 +303,131 @@ const EmergencySOS = () => {
                   </button>
                 </div>
 
-                {/* Location Detection Box with Quick Presets */}
+                {/* Location Selection Box */}
                 <div className="p-3 bg-light rounded text-start mt-4 mb-3 border">
                   <div className="d-flex align-items-center justify-content-between mb-2">
-                    <span className="fw-semibold text-dark fs-13">
-                      <i className="ri-map-pin-2-fill text-danger me-1"></i> Incident Location:
-                    </span>
-                    <Button
-                      color="link"
-                      size="sm"
-                      className="p-0 text-decoration-none"
-                      onClick={fetchCurrentLocation}
-                      disabled={locating}
-                    >
-                      {locating ? <Spinner size="sm" /> : <><i className="ri-crosshair-2-line me-1"></i> Detect GPS</>}
-                    </Button>
+                    <div>
+                      <span className="fw-semibold text-dark fs-14">
+                        <i className="ri-map-pin-2-fill text-danger me-1"></i> Incident Location:
+                      </span>
+                      <span className="badge bg-success-subtle text-success ms-2 fs-11">Consistent & Locked</span>
+                    </div>
+
+                    <div className="d-flex gap-2 align-items-center">
+                      <Button
+                        color="light"
+                        size="sm"
+                        className="py-1 px-2 fs-12 border"
+                        onClick={() => setShowManualCoords(!showManualCoords)}
+                      >
+                        <i className="ri-compass-3-line me-1"></i> Lat/Lng
+                      </Button>
+                      <Button
+                        color="outline-secondary"
+                        size="sm"
+                        className="py-1 px-2 fs-12"
+                        onClick={detectDeviceGPS}
+                        disabled={locating}
+                        title="Detect via device GPS (Warning: PC browsers use Wi-Fi/IP which may be imprecise)"
+                      >
+                        {locating ? <Spinner size="sm" /> : <><i className="ri-crosshair-2-line me-1"></i> Use Device GPS</>}
+                      </Button>
+                    </div>
                   </div>
+
+                  {/* Manual Coordinate Entry (Optional Collapsible) */}
+                  <Collapse isOpen={showManualCoords}>
+                    <div className="p-2 mb-2 bg-white rounded border">
+                      <div className="row g-2 align-items-center">
+                        <div className="col-5">
+                          <input
+                            type="number"
+                            step="any"
+                            placeholder="Latitude"
+                            className="form-control form-control-sm"
+                            value={manualLat}
+                            onChange={(e) => setManualLat(e.target.value)}
+                          />
+                        </div>
+                        <div className="col-5">
+                          <input
+                            type="number"
+                            step="any"
+                            placeholder="Longitude"
+                            className="form-control form-control-sm"
+                            value={manualLng}
+                            onChange={(e) => setManualLng(e.target.value)}
+                          />
+                        </div>
+                        <div className="col-2">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-primary w-100"
+                            onClick={applyManualCoords}
+                          >
+                            Set
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </Collapse>
 
                   {/* Quick Preset Location Pills */}
-                  <div className="d-flex flex-wrap gap-1 mb-2">
-                    {locationPresets.map((lp) => {
-                      const isCurr = location.latitude === lp.lat && location.longitude === lp.lng;
-                      return (
-                        <button
-                          key={lp.name}
-                          type="button"
-                          onClick={() => selectPresetLocation(lp)}
-                          className={`btn btn-sm ${isCurr ? "btn-danger" : "btn-outline-secondary"}`}
-                          style={{ fontSize: "11px", padding: "2px 8px" }}
-                        >
-                          <i className="ri-map-pin-line me-1"></i>{lp.name}
-                        </button>
-                      );
-                    })}
+                  <div className="mb-2">
+                    <div className="text-muted fs-11 mb-1">⚡ Quick Locations (1-Click Pin):</div>
+                    <div className="d-flex flex-wrap gap-1">
+                      {LOCATION_PRESETS.map((lp) => {
+                        const isCurr = Math.abs(location.latitude - lp.lat) < 0.001 && Math.abs(location.longitude - lp.lng) < 0.001;
+                        return (
+                          <button
+                            key={lp.name}
+                            type="button"
+                            onClick={() => selectPresetLocation(lp)}
+                            className={`btn btn-sm ${isCurr ? "btn-danger fw-semibold" : "btn-outline-secondary"}`}
+                            style={{ fontSize: "11px", padding: "2px 8px" }}
+                          >
+                            <i className="ri-map-pin-line me-1"></i>{lp.name}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
 
-                  <Input
-                    type="text"
-                    value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                    placeholder="Enter landmark or street address"
-                    className="form-control-sm mb-2"
-                  />
-                  <div className="fs-12 text-muted d-flex justify-content-between align-items-center">
-                    <span>Coordinates: {location.latitude ? `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}` : "Detecting GPS..."}</span>
-                    <span className="badge bg-success-subtle text-success">Nearest Local Fleet Enabled</span>
+                  {/* Google Places Autocomplete Search Box */}
+                  <div className="position-relative mb-2">
+                    <input
+                      ref={autocompleteInputRef}
+                      type="text"
+                      defaultValue={address}
+                      placeholder="🔍 Type address, landmark, colony, or hospital..."
+                      className="form-control form-control-sm"
+                      style={{ fontSize: '13px', paddingLeft: '12px' }}
+                      onChange={(e) => setAddress(e.target.value)}
+                    />
+                  </div>
+
+                  {/* Interactive Google Map Pin Dropper & Drag */}
+                  {mapsLoaded && (
+                    <div className="mb-2" style={{ borderRadius: '8px', overflow: 'hidden', border: '2px solid #dee2e6' }}>
+                      <GoogleMapPicker
+                        latitude={location.latitude}
+                        longitude={location.longitude}
+                        onLocationChange={(lat, lng, addr) => {
+                          updateLocation(lat, lng, addr);
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Active Coordinate & Address Summary */}
+                  <div className="p-2 bg-white rounded border d-flex justify-content-between align-items-center">
+                    <div className="text-truncate me-2" style={{ maxWidth: '75%' }}>
+                      <span className="fw-semibold text-dark fs-12">📍 Confirmed Address: </span>
+                      <span className="text-muted fs-12">{address}</span>
+                    </div>
+                    <Badge color="danger" className="p-1 px-2 fs-11">
+                      {location.latitude ? `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}` : "Not Set"}
+                    </Badge>
                   </div>
                 </div>
 
@@ -289,65 +485,44 @@ const EmergencySOS = () => {
             </Card>
           </Col>
 
-          {/* Quick Dial Helplines & VAPI AI Voice Line */}
+          {/* Quick Dial Helplines */}
           <Col lg={4} xl={4}>
             <Card className="border-0 shadow-sm mb-4">
               <CardBody>
-                <h5 className="card-title mb-3">Direct Emergency Voice Lines</h5>
+                <h5 className="card-title mb-3">Direct Emergency Helplines</h5>
                 <div className="d-grid gap-2">
-                  {/* Dedicated VAPI Voice Assistant Hotline */}
                   <a
-                    href="tel:+16089013032"
+                    href="tel:108"
                     className="btn btn-danger text-white d-flex align-items-center justify-content-between p-3 shadow-sm border-0"
                     style={{ background: "linear-gradient(135deg, #ef476f 0%, #e63946 100%)" }}
                   >
                     <div className="d-flex align-items-center">
                       <i className="ri-customer-service-2-fill fs-24 me-3 text-white"></i>
                       <div className="text-start">
-                        <h6 className="mb-0 fw-bold text-white">VAPI AI Ambulance Line</h6>
-                        <span className="fs-12 text-white-75">+1 (608) 901-3032 (Voice Triage)</span>
+                        <h6 className="mb-0 fw-bold text-white">National Ambulance Service</h6>
+                        <span className="fs-12 text-white-75">Toll-Free Helpline: 108</span>
                       </div>
                     </div>
-                    <Badge color="light" className="text-danger fw-bold px-2 py-1">AI Voice</Badge>
+                    <Badge color="light" className="text-danger fw-bold px-2 py-1">24x7</Badge>
                   </a>
-
-                  <a href="tel:108" className="btn btn-outline-danger d-flex align-items-center justify-content-between p-3">
+                  <a
+                    href="tel:112"
+                    className="btn btn-primary text-white d-flex align-items-center justify-content-between p-3 shadow-sm border-0 mt-2"
+                  >
                     <div className="d-flex align-items-center">
-                      <i className="ri-phone-fill fs-24 me-3 text-danger"></i>
+                      <i className="ri-phone-fill fs-24 me-3 text-white"></i>
                       <div className="text-start">
-                        <h6 className="mb-0 fw-bold">Call 108</h6>
-                        <span className="fs-12 text-muted">National Ambulance Helpline</span>
+                        <h6 className="mb-0 fw-bold text-white">Emergency Response System</h6>
+                        <span className="fs-12 text-white-75">Unified Helpline: 112</span>
                       </div>
                     </div>
-                    <Badge color="danger">Toll Free</Badge>
-                  </a>
-
-                  <a href="tel:112" className="btn btn-outline-primary d-flex align-items-center justify-content-between p-3">
-                    <div className="d-flex align-items-center">
-                      <i className="ri-alarm-line fs-24 me-3 text-primary"></i>
-                      <div className="text-start">
-                        <h6 className="mb-0 fw-bold">Call 112</h6>
-                        <span className="fs-12 text-muted">All-in-One Emergency Services</span>
-                      </div>
-                    </div>
-                    <Badge color="primary">24x7</Badge>
-                  </a>
-
-                  <a href="tel:102" className="btn btn-outline-info d-flex align-items-center justify-content-between p-3">
-                    <div className="d-flex align-items-center">
-                      <i className="ri-women-line fs-24 me-3 text-info"></i>
-                      <div className="text-start">
-                        <h6 className="mb-0 fw-bold">Call 102</h6>
-                        <span className="fs-12 text-muted">Maternity & Child Emergency</span>
-                      </div>
-                    </div>
-                    <Badge color="info">Free</Badge>
+                    <Badge color="light" className="text-primary fw-bold px-2 py-1">Toll-Free</Badge>
                   </a>
                 </div>
 
                 <div className="mt-4 p-3 bg-light rounded text-center">
                   <i className="ri-chat-voice-line fs-28 text-primary mb-2 d-inline-block"></i>
-                  <h6>Prefer AI Voice or Chat?</h6>
+                  <h6>Prefer AI Medical Chat?</h6>
                   <p className="text-muted fs-12 mb-3">
                     Our AI conversational triage agent can assess your symptoms and guide you through first aid.
                   </p>

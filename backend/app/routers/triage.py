@@ -1,6 +1,5 @@
-# backend/app/routers/triage.py
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 import httpx
 import os
 import json
@@ -10,6 +9,7 @@ from typing import List, Optional
 from ..schemas import CaseInput, CaseResponse, RecentCaseResponse, AmbulanceStatusResponse
 from .. import crud, models
 from ..database import get_db
+from ..auth import get_optional_current_user
 from ..llm_config import (
     LOCAL_LLM_MODEL,
     LOCAL_LLM_URL,
@@ -128,8 +128,18 @@ async def create_new_case(case: CaseInput, db: Session = Depends(get_db)):
     if longitude is not None:
         longitude = Decimal(str(longitude))
     
+    user_id = case.user_id
+    if not user_id and case.name:
+        matched_user = db.query(models.User).filter(
+            (models.User.name.ilike(case.name.strip())) |
+            (models.User.email.ilike(case.contact.strip()))
+        ).first()
+        if matched_user:
+            user_id = matched_user.id
+
     db_case = models.Case(
         patient=db_patient,
+        user_id=user_id,
         triage_level=case_triage,
         symptoms=identified_symptoms,
         location=case.location,
@@ -148,12 +158,13 @@ async def create_new_case(case: CaseInput, db: Session = Depends(get_db)):
         from .maps import find_best_ambulance_with_routes
         
         if case.latitude and case.longitude:
-            # Find the best ambulance using smart selection
+            # Find the best ambulance using smart severity-aware selection
             best_ambulance_data = find_best_ambulance_with_routes(
                 float(case.latitude), 
                 float(case.longitude), 
                 ambulance_type, 
-                db
+                db,
+                severity=case_triage  # Pass triage level for tiered dispatch
             )
             
             if best_ambulance_data:
@@ -172,6 +183,8 @@ async def create_new_case(case: CaseInput, db: Session = Depends(get_db)):
                     selected_ambulance.status = "dispatch"  # pyright: ignore[reportAttributeAccessIssue]
                     # Update case status to 'Assigned'
                     db_case.status = "Assigned"
+                    if getattr(selected_ambulance, "hospital_id", None):
+                        db_case.hospital_id = selected_ambulance.hospital_id
                     # Update patient status to 'Travelling' when ambulance is dispatched
                     db_patient.patient_status = "Travelling"
                     db.commit()
@@ -199,13 +212,32 @@ async def create_new_case(case: CaseInput, db: Session = Depends(get_db)):
 
 
 @router.get("/all-recent", response_model=List[RecentCaseResponse])
-async def get_all_recent_cases(db: Session = Depends(get_db)):
+async def get_all_recent_cases(
+    db: Session = Depends(get_db),
+    current_user: Optional[models.User] = Depends(get_optional_current_user),
+):
     """
-    Fetches all recent cases and manually formats the data
-    to match the RecentCaseResponse schema.
+    Fetches recent cases tailored to the user's role:
+    - Normal user/citizen: Only their own cases
+    - Hospital staff: Cases assigned to their hospital
+    - Admin: All cases system-wide
     """
-    # Get all recent cases (ordered by ID descending = newest first)
-    recent_cases_from_db = crud.get_recent_cases(db=db)
+    query = db.query(models.Case).options(joinedload(models.Case.patient))
+
+    if current_user:
+        if current_user.role == "user":
+            query = query.filter(
+                (models.Case.user_id == current_user.id) |
+                (models.Case.patient.has(models.Patient.name.ilike(f"%{current_user.name}%")))
+            )
+        elif current_user.role == "hospital" and current_user.hospital_id:
+            query = query.filter(
+                (models.Case.hospital_id == current_user.hospital_id) |
+                (models.Case.hospital_id.is_(None))
+            )
+        # Admins see all cases
+
+    recent_cases_from_db = query.order_by(models.Case.id.desc()).all()
     
     if not recent_cases_from_db:
         return []
@@ -334,4 +366,16 @@ async def get_case_ambulance_details(case_id: int, db: Session = Depends(get_db)
             "address": case.location
         }
     }
+
+
+@router.delete("/cases/{case_id}")
+async def delete_triage_case(case_id: int, db: Session = Depends(get_db)):
+    """Delete an emergency incident case."""
+    case_obj = db.query(models.Case).filter(models.Case.id == case_id).first()
+    if not case_obj:
+        raise HTTPException(status_code=404, detail="Case not found")
+    db.delete(case_obj)
+    db.commit()
+    return {"message": "Case deleted successfully", "id": case_id}
+
 

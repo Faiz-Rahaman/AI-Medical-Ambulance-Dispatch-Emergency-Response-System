@@ -47,19 +47,18 @@ def get_my_cases(
         .join(models.Patient, models.Case.patient_id == models.Patient.id)
     )
 
-    # Filter either by user_id or by patient name matching current user
-    user_cases = (
-        query.filter(
-            (models.Case.user_id == current_user.id) | 
-            (models.Patient.name.ilike(f"%{current_user.name}%"))
+    if current_user.role == "admin":
+        user_cases = query.order_by(models.Case.id.desc()).all()
+    else:
+        # Strictly filter for this specific user
+        user_cases = (
+            query.filter(
+                (models.Case.user_id == current_user.id) | 
+                (models.Patient.name.ilike(f"%{current_user.name}%"))
+            )
+            .order_by(models.Case.id.desc())
+            .all()
         )
-        .order_by(models.Case.id.desc())
-        .all()
-    )
-
-    # If no specific user cases found, fallback to recent 5 cases so the UI displays sample data
-    if not user_cases:
-        user_cases = query.order_by(models.Case.id.desc()).limit(5).all()
 
     result = []
     for c in user_cases:
@@ -219,7 +218,7 @@ def track_case_ambulance(
             "current_location": amb.current_location if amb else "En Route",
             "latitude": amb_lat,
             "longitude": amb_lng,
-            "driver_contact": "+1 (608) 901-3032",
+            "driver_contact": "+91 98401 10801",
         },
         "hospital": {
             "name": hospital.name if hospital else "Nearest Hospital",

@@ -6,7 +6,7 @@ import logging
 import time
 import asyncio
 from sqlalchemy import text
-from .routers import triage, medicalchat, maps, vapi, admin, auth, hospital, user_portal
+from .routers import triage, medicalchat, maps, admin, auth, hospital, user_portal
 from .database import Base, engine, SessionLocal
 from .auth import get_password_hash
 from . import models
@@ -199,5 +199,4 @@ app.include_router(user_portal.router)
 app.include_router(triage.router)
 app.include_router(medicalchat.router)
 app.include_router(maps.router, prefix="/maps", tags=["maps"])
-app.include_router(vapi.router, tags=["vapi"])
 app.include_router(admin.router)

@@ -408,3 +408,26 @@ async def delete_ambulance(ambulance_id: int, db: Session = Depends(get_db)):
     return {"message": "Ambulance deleted successfully", "ambulance_id": ambulance_id}
 
 
+@router.delete("/patients/{patient_id}")
+async def delete_patient(patient_id: int, db: Session = Depends(get_db)):
+    """Delete a patient and their associated cases."""
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    # Delete associated cases first to avoid FK constraint errors
+    db.query(models.Case).filter(models.Case.patient_id == patient_id).delete()
+    db.delete(patient)
+    db.commit()
+    return {"message": "Patient deleted successfully", "id": patient_id}
+
+
+@router.delete("/cases/{case_id}")
+async def delete_case(case_id: int, db: Session = Depends(get_db)):
+    """Delete an emergency incident case."""
+    case_obj = db.query(models.Case).filter(models.Case.id == case_id).first()
+    if not case_obj:
+        raise HTTPException(status_code=404, detail="Case not found")
+    db.delete(case_obj)
+    db.commit()
+    return {"message": "Case deleted successfully", "id": case_id}
+

@@ -23,6 +23,7 @@ const PatientTracking = () => {
   const [dispatches, setDispatches] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedDispatch, setSelectedDispatch] = useState(null);
+  const [transitProgress, setTransitProgress] = useState(() => Math.floor(Math.random() * 25) + 45);
 
   const user = getLoggedinUser();
   const token = user?.token;
@@ -60,6 +61,17 @@ const PatientTracking = () => {
     }, 12000);
     return () => clearInterval(timer);
   }, [fetchTracking]);
+
+  // Simulate transit progress moving forward
+  useEffect(() => {
+    const progressTimer = setInterval(() => {
+      setTransitProgress((prev) => {
+        if (prev >= 97) return 97; // Cap just below 100 during demo
+        return prev + Math.floor(Math.random() * 3) + 1;
+      });
+    }, 8000);
+    return () => clearInterval(progressTimer);
+  }, []);
 
   return (
     <div className="page-content">
@@ -153,8 +165,8 @@ const PatientTracking = () => {
                       </Col>
                       <Col md={3} className="text-center">
                         <span className="text-muted fs-12 text-uppercase">Transit Progress</span>
-                        <Progress value={65} color="primary" className="mt-2" style={{ height: "8px" }} />
-                        <span className="text-muted fs-11 mt-1 d-block">65% of route covered</span>
+                        <Progress value={transitProgress} color="primary" className="mt-2" style={{ height: "8px" }} />
+                        <span className="text-muted fs-11 mt-1 d-block">{transitProgress}% of route covered</span>
                       </Col>
                     </Row>
                   </CardBody>

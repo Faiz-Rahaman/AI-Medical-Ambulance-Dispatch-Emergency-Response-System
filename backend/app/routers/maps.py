@@ -46,10 +46,47 @@ def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
     r = 6371
     return c * r
 
-def find_best_ambulance_with_routes(patient_lat: float, patient_lon: float, ambulance_type: str, db: Session) -> dict:
+def is_remote_location(patient_lat: float, patient_lon: float, db: Session, radius_km: float = 15.0) -> bool:
     """
-    Find the best ambulance based on fuel level >50%, shortest route, and shortest time.
-    Returns ambulance details with route information.
+    Determine if the patient location is 'remote' by counting how many hospitals
+    are within a given radius. If fewer than 3 hospitals are nearby, the area is
+    considered remote / low-density.
+    """
+    hospitals = db.query(models.Hospital).filter(
+        models.Hospital.latitude.isnot(None),
+        models.Hospital.longitude.isnot(None)
+    ).all()
+
+    nearby_count = 0
+    for h in hospitals:
+        h_lat = float(h.latitude) if h.latitude is not None else 0.0  # type: ignore
+        h_lon = float(h.longitude) if h.longitude is not None else 0.0  # type: ignore
+        dist = calculate_distance(patient_lat, patient_lon, h_lat, h_lon)
+        if dist <= radius_km:
+            nearby_count += 1
+
+    is_remote = nearby_count < 3
+    print(f"[TRIAGE-GEO] Hospitals within {radius_km}km: {nearby_count} -> {'REMOTE' if is_remote else 'CITY'}")
+    return is_remote
+
+
+def find_best_ambulance_with_routes(patient_lat: float, patient_lon: float, ambulance_type: str, db: Session, severity: str = "Emergency") -> dict:
+    """
+    Find the best ambulance using context-aware, severity-based dispatch:
+
+    Tier 1 – Non-Emergency (Clinical / Transport):
+        → Dispatch only ambulances attached to a hospital (hospital_id IS NOT NULL).
+          These are *scheduled-transport* units that don't deplete the emergency fleet.
+
+    Tier 2 – Emergency in a CITY (high hospital density):
+        → Dispatch the nearest available ambulance regardless of source (hospital or
+          standalone standby outpost) — speed is the priority.
+
+    Tier 3 – Emergency in a REMOTE area (low hospital density):
+        → Prefer standalone / reserved ambulances (hospital_id IS NULL) that are
+          positioned along highways and rural outposts specifically for remote
+          coverage.  Fall back to hospital ambulances only if no standby unit is
+          available.
     """
     # Step 1: Filter ambulances with fuel level > 50% and available status
     eligible_ambulances = db.query(models.Ambulance).filter(
@@ -58,42 +95,76 @@ def find_best_ambulance_with_routes(patient_lat: float, patient_lon: float, ambu
         models.Ambulance.latitude.isnot(None),
         models.Ambulance.longitude.isnot(None)
     ).all()
-    
+
     # Step 2: Further filter by ambulance type if specified
     if ambulance_type and ambulance_type != "Any":
         type_filtered = [amb for amb in eligible_ambulances if amb.type_of_ambulance == ambulance_type]  # pyright: ignore[reportGeneralTypeIssues]
         if type_filtered:  # If we have ambulances of the specified type, use them
             eligible_ambulances = type_filtered
         # If no ambulances of specified type, fall back to all eligible ambulances
-    
+
     if not eligible_ambulances:
         print(f"[WARN] No eligible ambulances found with fuel >50%. Creating standby reserve ambulance.")
         fallback_ambulance = create_fallback_ambulance(ambulance_type)
         return {
             "ambulance": fallback_ambulance,
-            "route": get_route_info(patient_lat, patient_lon, 
+            "route": get_route_info(patient_lat, patient_lon,
                                   float(fallback_ambulance.latitude) if fallback_ambulance.latitude is not None else 0.0,  # type: ignore
                                   float(fallback_ambulance.longitude) if fallback_ambulance.longitude is not None else 0.0),  # type: ignore
             "selection_reason": "fallback - no eligible ambulances",
             "is_fallback": True
         }
-    
+
+    # ── Step 3: SEVERITY-AWARE FILTERING ──────────────────────────────
+    severity_upper = (severity or "Emergency").strip()
+    dispatch_tier = ""
+
+    if severity_upper in ("Clinical", "Transport"):
+        # TIER 1: Non-Emergency -> hospital ambulances only
+        hospital_ambulances = [a for a in eligible_ambulances if getattr(a, 'hospital_id', None) is not None]
+        if hospital_ambulances:
+            eligible_ambulances = hospital_ambulances
+            dispatch_tier = "Tier-1 (Non-Emergency -> Hospital fleet)"
+        else:
+            dispatch_tier = "Tier-1 fallback (no hospital ambulances -> using all)"
+        print(f"[DISPATCH] {dispatch_tier}: {len(eligible_ambulances)} candidates")
+
+    elif severity_upper == "Emergency":
+        remote = is_remote_location(patient_lat, patient_lon, db)
+
+        if remote:
+            # TIER 3: Emergency + Remote -> prefer reserved / standby units
+            standby_ambulances = [a for a in eligible_ambulances if getattr(a, 'hospital_id', None) is None]
+            if standby_ambulances:
+                eligible_ambulances = standby_ambulances
+                dispatch_tier = "Tier-3 (Emergency + Remote -> Reserved standby units)"
+            else:
+                dispatch_tier = "Tier-3 fallback (no standalone units -> using hospital fleet)"
+            print(f"[DISPATCH] {dispatch_tier}: {len(eligible_ambulances)} candidates")
+        else:
+            # TIER 2: Emergency + City -> nearest regardless of source
+            dispatch_tier = "Tier-2 (Emergency + City -> Nearest available)"
+            print(f"[DISPATCH] {dispatch_tier}: {len(eligible_ambulances)} candidates")
+    else:
+        dispatch_tier = f"Unknown severity '{severity_upper}' -> treating as Emergency"
+        print(f"[DISPATCH] {dispatch_tier}: {len(eligible_ambulances)} candidates")
+
     print(f"[SEARCH] Evaluating {len(eligible_ambulances)} eligible ambulances...")
-    
-    # Step 3: Calculate routes for all eligible ambulances
+
+    # Step 4: Calculate routes for all eligible ambulances
     ambulance_route_data = []
-    
+
     for ambulance in eligible_ambulances:
         amb_lat = float(ambulance.latitude) if ambulance.latitude is not None else 0.0  # type: ignore
         amb_lon = float(ambulance.longitude) if ambulance.longitude is not None else 0.0  # type: ignore
-        
+
         try:
             # Get route information from Google Maps API
             route_info = get_route_info(patient_lat, patient_lon, amb_lat, amb_lon)
-            
+
             # Calculate straight-line distance as backup
             straight_distance = calculate_distance(patient_lat, patient_lon, amb_lat, amb_lon)
-            
+
             ambulance_route_data.append({
                 "ambulance": ambulance,
                 "route": route_info,
@@ -101,10 +172,10 @@ def find_best_ambulance_with_routes(patient_lat: float, patient_lon: float, ambu
                 "fuel_level": ambulance.fuel_level,
                 "ambulance_type": ambulance.type_of_ambulance
             })
-            
+
             print(f"[INFO] Ambulance {ambulance.vehicle_number}: {route_info.get('duration', 'N/A')}, "
                   f"{route_info.get('distance', 'N/A')}, Fuel: {ambulance.fuel_level}%")
-                  
+
         except Exception as e:
             print(f"[ERR] Error calculating route for ambulance {ambulance.vehicle_number}: {e}")
             # Add with fallback route info
@@ -122,10 +193,12 @@ def find_best_ambulance_with_routes(patient_lat: float, patient_lon: float, ambu
                 "fuel_level": ambulance.fuel_level,
                 "ambulance_type": ambulance.type_of_ambulance
             })
-    
-    # Step 4: Select the best ambulance based on criteria
+
+    # Step 5: Select the best ambulance based on criteria
     best_ambulance_data = select_best_ambulance(ambulance_route_data, patient_lat, patient_lon)
-    
+    if best_ambulance_data:
+        best_ambulance_data["dispatch_tier"] = dispatch_tier
+
     return best_ambulance_data
 
 def select_best_ambulance(ambulance_route_data: list, patient_lat: float, patient_lon: float) -> dict:
@@ -306,12 +379,13 @@ async def get_nearest_ambulance_route(
     patient_lat: float,
     patient_lon: float,
     ambulance_type: str,
+    severity: str = "Emergency",
     db: Session = Depends(get_db)
 ):
-    """Find the best ambulance based on fuel level >50%, shortest route, and shortest time."""
+    """Find the best ambulance using severity-aware tiered dispatch."""
     
-    # Use the new smart selection algorithm
-    best_ambulance_data = find_best_ambulance_with_routes(patient_lat, patient_lon, ambulance_type, db)
+    # Use the severity-aware smart selection algorithm
+    best_ambulance_data = find_best_ambulance_with_routes(patient_lat, patient_lon, ambulance_type, db, severity=severity)
     
     if not best_ambulance_data:
         raise HTTPException(status_code=404, detail=f"No available {ambulance_type} ambulance found")
@@ -319,6 +393,7 @@ async def get_nearest_ambulance_route(
     ambulance = best_ambulance_data["ambulance"]
     route_info = best_ambulance_data["route"]
     selection_reason = best_ambulance_data.get("selection_reason", "Selected based on criteria")
+    dispatch_tier = best_ambulance_data.get("dispatch_tier", "")
     
     # Safely convert coordinates
     amb_lat = float(ambulance.latitude) if ambulance.latitude is not None else 0.0  # pyright: ignore[reportArgumentType]
@@ -346,6 +421,7 @@ async def get_nearest_ambulance_route(
             "longitude": patient_lon
         },
         "selection_reason": selection_reason,
+        "dispatch_tier": dispatch_tier,
         "selection_criteria": {
             "fuel_level_minimum": 50,
             "primary_criteria": "shortest_travel_time",
@@ -459,6 +535,17 @@ async def add_demo_ambulances(db: Session = Depends(get_db)):
         "message": f"Added {len(added_ambulances)} demo ambulances",
         "ambulances": added_ambulances
     }
+
+@router.post("/reset-ambulances")
+@router.get("/reset-ambulances")
+async def reset_ambulances(db: Session = Depends(get_db)):
+    """Reset all ambulances to 'available' status with high fuel (>90%) for demos."""
+    count = db.query(models.Ambulance).update({
+        models.Ambulance.status: "available",
+        models.Ambulance.fuel_level: 95
+    })
+    db.commit()
+    return {"message": f"Reset {count} ambulances to available status", "count": count}
 
 # ==================== DEBUGGING ENDPOINTS ====================
 

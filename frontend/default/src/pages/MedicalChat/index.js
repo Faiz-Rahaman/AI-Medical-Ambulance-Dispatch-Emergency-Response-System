@@ -5,6 +5,7 @@ import PulseLoader from 'react-spinners/PulseLoader';
 import { Table } from 'reactstrap';
 import AmbulanceRoute from './components/AmbulanceRoute';
 import ErrorBoundary from './components/ErrorBoundary';
+import { getLoggedinUser } from '../../helpers/api_helper';
 
 const Medicalchat = () => {
     console.log('MedicalChat component initializing...');
@@ -106,8 +107,19 @@ const Medicalchat = () => {
     const recognitionRef = useRef(null);
     const transcribedTextRef = useRef('');
     const messagesEndRef = useRef(null);
-    // State for Location
-    const [location, setLocation] = useState(null);
+    // State for Location (reads from persistent localStorage if previously pinned)
+    const [location, setLocation] = useState(() => {
+        try {
+            const saved = localStorage.getItem("user_emergency_location");
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                if (parsed.latitude && parsed.longitude) {
+                    return { latitude: Number(parsed.latitude), longitude: Number(parsed.longitude) };
+                }
+            }
+        } catch (e) {}
+        return null;
+    });
     // Modal state
     
 
@@ -116,7 +128,18 @@ const Medicalchat = () => {
     const [ambulanceLoading, setAmbulanceLoading] = useState(false);
     const [showAmbulanceSidebar, setShowAmbulanceSidebar] = useState(false);
     const [showAmbulanceRoute, setShowAmbulanceRoute] = useState(false);
-    const [patientCoordinates, setPatientCoordinates] = useState(null);
+    const [patientCoordinates, setPatientCoordinates] = useState(() => {
+        try {
+            const saved = localStorage.getItem("user_emergency_location");
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                if (parsed.latitude && parsed.longitude) {
+                    return { latitude: Number(parsed.latitude), longitude: Number(parsed.longitude) };
+                }
+            }
+        } catch (e) {}
+        return null;
+    });
     const [ambulanceType, setAmbulanceType] = useState('Basic');
     
     // Popup notification state
@@ -206,6 +229,9 @@ const Medicalchat = () => {
                 const { latitude, longitude } = position.coords;
                 setLocation({ latitude, longitude });
                 setPatientCoordinates({ latitude, longitude });
+                try {
+                    localStorage.setItem("user_emergency_location", JSON.stringify({ latitude, longitude }));
+                } catch (e) {}
                 // Notify user with success popup
                 showPopupNotification('✅ Location captured successfully! Your coordinates are now ready for emergency dispatch.', 'success', 4000);
             },
@@ -232,12 +258,18 @@ const Medicalchat = () => {
         setIsThinking(true);
 
         try {
+            const authUser = getLoggedinUser();
+            const headers = { 'Content-Type': 'application/json' };
+            if (authUser?.token) {
+                headers['Authorization'] = `Bearer ${authUser.token}`;
+            }
             const res = await fetch(`${process.env.REACT_APP_API_URL}/llm-chat/`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers,
                 body: JSON.stringify({
                     message: messageToSend,
                     session_id: sessionId,
+                    user_id: authUser?.id || null,
                     // Send location data if it exists
                     latitude: location ? location.latitude : null,
                     longitude: location ? location.longitude : null,
@@ -426,7 +458,12 @@ const Medicalchat = () => {
 
     // Helper function to check if response indicates completion and trigger sidebar
     const checkAndTriggerSidebar = (responseText) => {
-        if (responseText && responseText.includes("Thank you, all details have been recorded. Help is on the way.")) {
+        if (
+            responseText &&
+            (responseText.includes("Help is on the way") ||
+             responseText.includes("details have been recorded") ||
+             responseText.includes("highest priority queue"))
+        ) {
             console.log("Completion message detected, triggering ambulance sidebar...");
             setTimeout(() => {
                 fetchAmbulanceDetails();
@@ -782,7 +819,7 @@ const Medicalchat = () => {
                                     <br />
                                     • Using the medical chat below
                                     <br />
-                                    • Making a voice call via VAPI
+                                    • Triggering an Emergency SOS
                                     <br />
                                     • Submitting a case form
                                 </p>

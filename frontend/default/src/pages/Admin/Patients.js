@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Container, Spinner, Table, Card, CardBody, CardHeader, Col, Row, Badge } from 'reactstrap';
+import { Container, Spinner, Table, Card, CardBody, CardHeader, Col, Row, Badge, Button, Modal, ModalHeader, ModalBody, ModalFooter } from 'reactstrap';
 
 const Patients = () => {
     document.title = "Patients | AI Medical System";
     const [patients, setPatients] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(false);
+    const [deleteModal, setDeleteModal] = useState(false);
+    const [deleteTarget, setDeleteTarget] = useState(null);
+    const [deleting, setDeleting] = useState(false);
 
     const fetchPatients = useCallback(async () => {
         setLoading(true);
@@ -65,6 +68,30 @@ const Patients = () => {
             .join('');
     };
 
+    const confirmDelete = (patient) => {
+        setDeleteTarget(patient);
+        setDeleteModal(true);
+    };
+
+    const handleDelete = async () => {
+        if (!deleteTarget) return;
+        setDeleting(true);
+        try {
+            const res = await fetch(`${process.env.REACT_APP_API_URL}/admin/patients/${deleteTarget.id}`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+            });
+            if (!res.ok) throw new Error('Delete failed');
+            fetchPatients();
+        } catch (err) {
+            console.error('Error deleting patient:', err);
+        } finally {
+            setDeleting(false);
+            setDeleteModal(false);
+            setDeleteTarget(null);
+        }
+    };
+
     return (
         <div className="page-content">
             <Container fluid>
@@ -109,6 +136,7 @@ const Patients = () => {
                                                     <th scope="col">Triage</th>
                                                     <th scope="col">Ambulance Type</th>
                                                     <th scope="col">Status</th>
+                                                    <th scope="col">Actions</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -153,6 +181,11 @@ const Patients = () => {
                                                                 {patient.patient_status}
                                                             </Badge>
                                                         </td>
+                                                        <td>
+                                                            <Button color="danger" size="sm" outline onClick={() => confirmDelete(patient)} title="Delete patient">
+                                                                <i className="ri-delete-bin-5-line"></i>
+                                                            </Button>
+                                                        </td>
                                                     </tr>
                                                 ))}
                                             </tbody>
@@ -164,6 +197,23 @@ const Patients = () => {
                     </Col>
                 </Row>
             </Container>
+
+            {/* Delete Confirmation Modal */}
+            <Modal isOpen={deleteModal} toggle={() => setDeleteModal(false)} centered>
+                <ModalHeader toggle={() => setDeleteModal(false)} className="bg-danger-subtle">
+                    Confirm Delete
+                </ModalHeader>
+                <ModalBody>
+                    <p>Are you sure you want to delete patient <strong>{deleteTarget?.name}</strong> (#{deleteTarget?.id})?</p>
+                    <p className="text-muted mb-0">This will also delete all associated case records. This action cannot be undone.</p>
+                </ModalBody>
+                <ModalFooter>
+                    <Button color="light" onClick={() => setDeleteModal(false)}>Cancel</Button>
+                    <Button color="danger" onClick={handleDelete} disabled={deleting}>
+                        {deleting ? <><Spinner size="sm" className="me-2" />Deleting...</> : 'Delete'}
+                    </Button>
+                </ModalFooter>
+            </Modal>
         </div>
     );
 }

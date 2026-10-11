@@ -73,6 +73,15 @@ const Navdata = () => {
             },
           },
           {
+            id: "admincases",
+            label: "Incident Cases",
+            link: "/admin/cases",
+            click: function (e) {
+              e.preventDefault();
+              history("/admin/cases");
+            },
+          },
+          {
             id: "hospitals",
             label: "Hospitals Network",
             link: "/admin/hospitals",

@@ -11,7 +11,7 @@ A complete, beginner-friendly setup guide to get the **AI Medical Ambulance Disp
 4. [Step 3: Backend Setup (FastAPI)](#-step-3-backend-setup-fastapi)
 5. [Step 4: Frontend Setup (React)](#-step-4-frontend-setup-react)
 6. [Step 5: Run & Verify the Application](#-step-5-run--verify-the-application)
-7. [Step 6 (Optional): Local LLM & Voice AI Telephony](#-step-6-optional-local-llm--voice-ai-telephony)
+7. [Step 6 (Optional): Local LLM Setup with LM Studio](#-step-6-optional-local-llm-setup-with-lm-studio)
 8. [Troubleshooting & Common Issues](#-troubleshooting--common-issues)
 
 ---
@@ -109,10 +109,6 @@ DATABASE_URL=mysql+pymysql://root:your_mysql_password@localhost/medicalsystem
 LOCAL_LLM_URL=http://localhost:1234/v1/chat/completions
 LOCAL_LLM_MODEL=google/gemma-4-12b-qat
 LOCAL_LLM_REASONING=off
-
-# Vapi Voice AI (Optional)
-VAPI_API_KEY=your_vapi_api_key
-VAPI_PHONE_NUMBER_ID=your_vapi_phone_number_id
 ```
 
 ### 5. Check Database Connection String
@@ -121,12 +117,16 @@ Open `backend/app/database.py` and ensure the `DATABASE_URL` matches your local 
 DATABASE_URL = "mysql+pymysql://root:your_mysql_password@localhost/medicalsystem"
 ```
 
-### 6. Seed Demo Ambulances
-Run the seeder script to populate the initial ambulance fleet across test coordinates:
+### 6. Seed Demo Hospitals, Ambulances & Clinical System Prompt
+Run the network seeder script to populate real hospitals and ambulances near Amrita Vishwa Vidyapeetham (Vengal / Tiruvallur):
 ```bash
-python add_demo_ambulances.py
+# Seed 10 real hospitals & 12 ambulances near Amrita Vishwa Vidyapeetham, Vengal
+python seed_vengal_network.py
+
+# Sync the emergency-first clinical triage prompt to MySQL
+python update_db_prompt.py
 ```
-*You should see:* `🎉 Successfully added 6 new demo ambulances!`
+*You should see:* `🎉 Seeded 10 real hospitals & 12 ambulances` and `Successfully updated prompt record in database!`
 
 ### 7. Start the Backend Server
 ```bash
@@ -191,96 +191,13 @@ Once both servers are running:
 
 ---
 
-## 🤖 Step 6 (Optional): Local LLM & Voice AI Telephony
+## 🤖 Step 6 (Optional): Local LLM Setup with LM Studio
 
-### A. Local LLM with LM Studio (Offline AI Triage)
+### Local LLM with LM Studio (Offline AI Triage)
 1. Install [LM Studio](https://lmstudio.ai/).
 2. Search and download a model (e.g., `Gemma-2-9B`, `Llama-3.2-3B`, or `Mistral-7B-Instruct`).
 3. Navigate to the **Local Server** tab (`<->`), load the downloaded model, and click **Start Server** on port `1234`.
 4. The backend triage engine will automatically connect to `http://localhost:1234/v1/chat/completions`.
-
-### B. Voice AI Inbound Calls with Vapi & ngrok (Full Setup)
-
-Vapi provides an autonomous voice telephony agent that answers phone calls, gathers patient symptoms and location, and directly dispatches an ambulance during the call.
-
-#### 1. Expose Local Backend via ngrok
-In a separate terminal, expose port `8000`:
-```bash
-ngrok http 8000
-```
-Copy your forwarding URL (e.g. `https://abc1234.ngrok-free.dev`).
-
-#### 2. Create an Assistant in Vapi Dashboard
-1. Log in to [dashboard.vapi.ai](https://dashboard.vapi.ai/).
-2. Go to **Assistants** → **Create Assistant**.
-3. Set **Model**: OpenAI (`gpt-4o-mini` or `gpt-3.5-turbo`) with Temperature `0.7`.
-4. Set the **System Prompt**:
-```text
-You are an AI medical emergency assistant for emergency dispatch. Your primary goal is to collect patient details (name, age, gender, phone, location/address, and symptoms) to dispatch medical help.
-
-Conversational Flow:
-1. Greet the caller calmly and ask about the emergency.
-2. Ask about symptoms and condition severity.
-3. Collect: Patient Name, Age, Gender, Phone Number, and Exact Location / Address in Chennai.
-4. Once you have the information, immediately call the tool 'create_emergency_case'.
-5. Once dispatched, reassure the caller and inform them that an ambulance is en route with the estimated arrival time.
-
-Style: Empathetic, calm, concise, professional.
-```
-
-#### 3. Create the Function Tool in Vapi
-1. Go to **Tools** → **Create Tool** (Type: `Function`).
-2. **Name**: `create_emergency_case`
-3. **Description**: `Create an emergency medical case with patient information and dispatch an ambulance.`
-4. **Server URL**: `https://<YOUR-NGROK-URL>/vapi/function-call` *(or `/vapi/tool-calls`)*
-5. **Parameters JSON Schema**:
-```json
-{
-  "type": "object",
-  "properties": {
-    "name": {
-      "type": "string",
-      "description": "Patient's full name"
-    },
-    "age": {
-      "type": "integer",
-      "description": "Patient's age in years"
-    },
-    "gender": {
-      "type": "string",
-      "enum": ["Male", "Female", "Other"],
-      "description": "Patient's gender"
-    },
-    "phone": {
-      "type": "string",
-      "description": "Patient's contact phone number"
-    },
-    "symptoms": {
-      "type": "string",
-      "description": "Description of symptoms and emergency condition"
-    },
-    "location": {
-      "type": "string",
-      "description": "Patient's address, landmark, or street location for GPS geocoding and dispatch"
-    }
-  },
-  "required": ["name", "age", "gender", "symptoms", "location"]
-}
-```
-6. Attach this tool to your Assistant.
-
-#### 4. Configure Server Webhooks (Optional but recommended)
-In your Vapi Assistant settings:
-- **Server URL**: `https://<YOUR-NGROK-URL>/vapi/server`
-- **Status Callback URL**: `https://<YOUR-NGROK-URL>/vapi/status`
-- **End Call URL**: `https://<YOUR-NGROK-URL>/vapi/end-call`
-
-#### 5. Test the Vapi Integration
-You can simulate a Vapi function call anytime using curl:
-```bash
-curl -X POST http://localhost:8000/vapi/function-call -H "Content-Type: application/json" -d "{\"message\":{\"toolCalls\":[{\"id\":\"test-call-1\",\"function\":{\"name\":\"create_emergency_case\",\"arguments\":{\"name\":\"Ravi Kumar\",\"age\":45,\"gender\":\"Male\",\"symptoms\":\"Severe chest pain and shortness of breath\",\"location\":\"Marina Beach, Chennai\"}}}]},\"call\":{\"id\":\"test-123\"}}"
-```
-- Open `http://localhost:8000/vapi/config` in your browser to check webhook routing status.
 
 ---
 

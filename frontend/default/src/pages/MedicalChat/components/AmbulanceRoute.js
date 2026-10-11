@@ -306,12 +306,12 @@ const AmbulanceRoute = ({ patientLat, patientLon, ambulanceType, onRouteLoaded }
               </div>
               <div className="col-md-6 mb-2">
                 <a
-                  href="tel:+16089013032"
+                  href="tel:108"
                   className="btn btn-success w-100 d-flex align-items-center justify-content-center text-white"
-                  title="Call VAPI AI Dispatch (+1 608-901-3032)"
+                  title="Contact Assigned Ambulance Crew"
                 >
                   <Phone size={16} className="me-2" />
-                  Contact Crew (VAPI AI)
+                  Contact Crew
                 </a>
               </div>
             </div>

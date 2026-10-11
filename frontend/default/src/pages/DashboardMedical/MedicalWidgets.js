@@ -2,20 +2,26 @@ import React, { useEffect, useMemo, useState } from 'react';
 import CountUp from "react-countup";
 import { Link } from 'react-router-dom';
 import { Card, CardBody, Col } from 'reactstrap';
-// Removed static medicalWidgets; compute from live data
+import { getLoggedinUser } from '../../helpers/api_helper';
 
 const MedicalWidgets = () => {
     const [cases, setCases] = useState([]);
     const [loading, setLoading] = useState(false);
+    const currentUser = getLoggedinUser();
 
     useEffect(() => {
         let isMounted = true;
         const load = async () => {
             try {
                 setLoading(true);
+                const user = getLoggedinUser();
+                const headers = { 'Content-Type': 'application/json' };
+                if (user?.token) {
+                    headers['Authorization'] = `Bearer ${user.token}`;
+                }
                 const res = await fetch(`${process.env.REACT_APP_API_URL}/triage/all-recent`, {
                     method: 'GET',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers,
                 });
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
@@ -36,12 +42,12 @@ const MedicalWidgets = () => {
         const inProgress = cases.filter(c => (c.status || '').toLowerCase() === 'in progress').length;
         const completed = cases.filter(c => (c.status || '').toLowerCase() === 'completed').length;
         return [
-            { id: 1, label: 'Total Cases', counter: total, bgcolor: 'primary', icon: 'bx bx-collection' },
+            { id: 1, label: currentUser?.role === 'user' ? 'My Emergency Cases' : 'Total Cases', counter: total, bgcolor: 'primary', icon: 'bx bx-collection' },
             { id: 2, label: 'Pending', counter: pending, bgcolor: 'warning', icon: 'bx bx-time' },
             { id: 3, label: 'In Progress', counter: inProgress, bgcolor: 'info', icon: 'bx bx-run' },
             { id: 4, label: 'Completed', counter: completed, bgcolor: 'success', icon: 'bx bx-check-circle' },
         ];
-    }, [cases]);
+    }, [cases, currentUser?.role]);
 
     return (
         <React.Fragment>
@@ -64,7 +70,7 @@ const MedicalWidgets = () => {
                                             <CountUp start={0} end={item.counter} duration={1.2} />
                                         </span>
                                     </h4>
-                                    <Link to="/cases" className="text-decoration-underline">View details</Link>
+                                    <Link to={currentUser?.role === 'user' ? '/user/my-cases' : '/cases'} className="text-decoration-underline">View details</Link>
                                 </div>
                                 <div className="avatar-sm flex-shrink-0">
                                     <span className={"avatar-title rounded fs-3 bg-" + item.bgcolor + "-subtle"}>

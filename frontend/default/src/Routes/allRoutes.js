@@ -97,6 +97,14 @@ const authProtectedRoutes = [
     ),
   },
   {
+    path: "/admin/cases",
+    component: (
+      <RoleProtected allowedRoles={["admin"]}>
+        <Cases />
+      </RoleProtected>
+    ),
+  },
+  {
     path: "/cases",
     component: (
       <RoleProtected allowedRoles={["admin", "hospital"]}>

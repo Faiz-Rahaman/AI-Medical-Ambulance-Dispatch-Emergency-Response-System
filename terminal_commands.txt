@@ -1,28 +1,7 @@
 # Terminal 1 - Backend
 cd backend
-uvicorn app.main:app --reload --port 8000
+python start_server.py
 
 # Terminal 2 - Frontend
 cd frontend/default
 npm start
-
-# Terminal 3 - ngrok
-ngrok http 8000
-
-Function Call / Tool Calls:
-https://remunerative-neva-mitigable.ngrok-free.dev/vapi/function-call
-https://remunerative-neva-mitigable.ngrok-free.dev/vapi/tool-calls
-
-Status Webhook:
-https://remunerative-neva-mitigable.ngrok-free.dev/vapi/status
-
-Server Webhook:
-https://remunerative-neva-mitigable.ngrok-free.dev/vapi/server
-
-End Call Webhook:
-https://remunerative-neva-mitigable.ngrok-free.dev/vapi/end-call
-
-Config (Testing):
-https://remunerative-neva-mitigable.ngrok-free.dev/vapi/config
-
-curl -X POST http://localhost:8000/vapi/function-call -H "Content-Type: application/json" -d "{\"message\":{\"toolCalls\":[{\"id\":\"test-1\",\"function\":{\"name\":\"create_emergency_case\",\"arguments\":{\"name\":\"Test User\",\"age\":30,\"gender\":\"Male\",\"symptoms\":\"Chest pain\",\"location\":\"Marina Beach, Chennai\"}}}]},\"call\":{\"id\":\"test-call-1\"}}"

@@ -37,6 +37,7 @@ chat_sessions = {}
 class ChatRequest(BaseModel):
     message: str
     session_id: str
+    user_id: Optional[int] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
 
@@ -254,10 +255,15 @@ async def llm_chat(
                     llm_response_text = parsed_json["data"]
 
                 elif parsed_json.get("response_type") == "json":
-                    # This is the final JSON with patient data, proceed to save it
                     patient_data = parsed_json.get("data", {})
                     
-                    symptoms = extract_symptoms_from_history(chat_sessions[request.session_id])
+                    # Prefer explicit symptoms extracted by the AI, fallback to conversation history
+                    explicit_symptoms = str(patient_data.get("symptoms") or "").strip()
+                    if explicit_symptoms and explicit_symptoms.lower() not in ["none", "unknown", "n/a"]:
+                        symptoms = explicit_symptoms
+                    else:
+                        symptoms = extract_symptoms_from_history(chat_sessions[request.session_id])
+                    
                     age_value = patient_data.get("age")
                     parsed_age = parse_age(age_value)
                     cleaned_phone = clean_phone_number(patient_data.get("phone"))
@@ -272,6 +278,7 @@ async def llm_chat(
                         "location": "Location captured via GPS" if request.latitude else "Unknown",
                         "latitude": request.latitude,
                         "longitude": request.longitude,
+                        "user_id": request.user_id,
                     }
                     
                     # Log the parsed data for debugging

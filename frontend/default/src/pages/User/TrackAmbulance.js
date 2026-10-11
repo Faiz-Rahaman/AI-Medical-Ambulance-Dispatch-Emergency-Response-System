@@ -80,11 +80,11 @@ const TrackAmbulance = () => {
     fetchTracking();
   }, [fetchTracking]);
 
-  // Periodic ETA countdown simulation
+  // Periodic ETA countdown simulation — ticks every 15s for demo realism
   useEffect(() => {
     const timer = setInterval(() => {
       setCountdown((prev) => (prev > 1 ? prev - 1 : 1));
-    }, 60000);
+    }, 15000);
     return () => clearInterval(timer);
   }, []);
 
@@ -130,10 +130,10 @@ const TrackAmbulance = () => {
                       <Col md={5} className="mt-3 mt-md-0 text-md-end">
                         <div className="d-inline-flex flex-wrap gap-2">
                           <a
-                            href={`tel:${trackData.ambulance?.driver_contact || "+16089013032"}`}
+                            href={`tel:${trackData.ambulance?.driver_contact || "108"}`}
                             className="btn btn-light text-primary fw-semibold"
                           >
-                            <i className="ri-phone-fill me-1 text-success"></i> Call AI Dispatch ({trackData.ambulance?.driver_contact || "+1 (608) 901-3032"})
+                            <i className="ri-phone-fill me-1 text-success"></i> Call Driver ({trackData.ambulance?.driver_contact || "108"})
                           </a>
                           <Button color="outline-light" onClick={fetchTracking}>
                             <i className="ri-refresh-line"></i> Refresh GPS

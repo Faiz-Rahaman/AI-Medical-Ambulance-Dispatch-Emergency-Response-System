@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Container, Spinner, Table, Card, CardBody, CardHeader, Col, Row, Badge, Button, Modal, ModalHeader, ModalBody, Form, Input, Label } from 'reactstrap';
+import { Container, Spinner, Table, Card, CardBody, CardHeader, Col, Row, Badge, Button, Modal, ModalHeader, ModalBody, ModalFooter, Form, Input, Label } from 'reactstrap';
 import axios from 'axios';
 
 const Ambulances = () => {
@@ -10,6 +10,9 @@ const Ambulances = () => {
     const [modal, setModal] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState('');
+    const [deleteModal, setDeleteModal] = useState(false);
+    const [deleteTarget, setDeleteTarget] = useState(null);
+    const [deleting, setDeleting] = useState(false);
     
     // Form state
     const [formData, setFormData] = useState({
@@ -139,6 +142,30 @@ const Ambulances = () => {
         }
     };
 
+    const confirmDelete = (ambulance) => {
+        setDeleteTarget(ambulance);
+        setDeleteModal(true);
+    };
+
+    const handleDelete = async () => {
+        if (!deleteTarget) return;
+        setDeleting(true);
+        try {
+            const res = await fetch(`${process.env.REACT_APP_API_URL}/admin/ambulances/${deleteTarget.ambulance_id}`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+            });
+            if (!res.ok) throw new Error('Delete failed');
+            fetchAmbulances();
+        } catch (err) {
+            console.error('Error deleting ambulance:', err);
+        } finally {
+            setDeleting(false);
+            setDeleteModal(false);
+            setDeleteTarget(null);
+        }
+    };
+
     const statusColor = (status) => {
         const s = (status || '').toLowerCase();
         if (s === 'available') return 'success';
@@ -200,6 +227,7 @@ const Ambulances = () => {
                                                     <th scope="col">Location</th>
                                                     <th scope="col">Staff Count</th>
                                                     <th scope="col">Fuel Level</th>
+                                                    <th scope="col">Actions</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -243,6 +271,11 @@ const Ambulances = () => {
                                                                 </div>
                                                                 <span className="ms-2 text-muted">{ambulance.fuel_level}%</span>
                                                             </div>
+                                                        </td>
+                                                        <td>
+                                                            <Button color="danger" size="sm" outline onClick={() => confirmDelete(ambulance)} title="Delete ambulance">
+                                                                <i className="ri-delete-bin-5-line"></i>
+                                                            </Button>
                                                         </td>
                                                     </tr>
                                                 ))}
@@ -409,6 +442,23 @@ const Ambulances = () => {
                         </Button>
                     </div>
                 </Form>
+            </Modal>
+
+            {/* Delete Confirmation Modal */}
+            <Modal isOpen={deleteModal} toggle={() => setDeleteModal(false)} centered>
+                <ModalHeader toggle={() => setDeleteModal(false)} className="bg-danger-subtle">
+                    Confirm Delete
+                </ModalHeader>
+                <ModalBody>
+                    <p>Are you sure you want to delete ambulance <strong>{deleteTarget?.vehicle_number}</strong>?</p>
+                    <p className="text-muted mb-0">This action cannot be undone.</p>
+                </ModalBody>
+                <ModalFooter>
+                    <Button color="light" onClick={() => setDeleteModal(false)}>Cancel</Button>
+                    <Button color="danger" onClick={handleDelete} disabled={deleting}>
+                        {deleting ? <><Spinner size="sm" className="me-2" />Deleting...</> : 'Delete'}
+                    </Button>
+                </ModalFooter>
             </Modal>
         </div>
     );
